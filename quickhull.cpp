@@ -11,7 +11,30 @@ struct Point {
     Point operator-(const Point& other) const {
         return {x - other.x, y - other.y, z - other.z};
     }
+
+    Point cross(const Point& other) const {
+        return {y * other.z - z * other.y, z * other.x - x * other.z, x * other.y - y * other.x};
+    }
+
+    double dot(const Point& other) const {
+        return x * other.x + y * other.y + z * other.z;
+    }
+
+    double length() const {
+        return std::sqrt(x * x + y * y + z * z);
+    }
 };
+
+struct Face {
+    Point a, b, c;
+};
+
+double distanceToFace(const Point& p, const Face& f) {
+    Point normal = (f.b - f.a).cross(f.c - f.a);
+    double d = -normal.dot(f.a);
+    return std::abs(normal.dot(p) + d) / normal.length();
+}
+
 
 int main() {
     std::ifstream file("rbox_verts.txt");
@@ -70,12 +93,30 @@ int main() {
         }
     }
 
-    // Print the initial points of the convex hull
-    std::cout << "Initial points of the convex hull:" << std::endl;
-    std::cout << minPoint.x << " " << minPoint.y << " " << minPoint.z << std::endl;
-    std::cout << maxPoint.x << " " << maxPoint.y << " " << maxPoint.z << std::endl;
-    std::cout << maxDistPoint1.x << " " << maxDistPoint1.y << " " << maxDistPoint1.z << std::endl;
-    std::cout << maxDistPoint2.x << " " << maxDistPoint2.y << " " << maxDistPoint2.z << std::endl;
+    // Create the initial tetrahedron
+    std::vector<Face> faces = {
+        {minPoint, maxDistPoint1, maxDistPoint2},
+        {maxPoint, maxDistPoint1, maxDistPoint2},
+        {minPoint, maxPoint, maxDistPoint1},
+        {minPoint, maxPoint, maxDistPoint2}
+    };
+
+    // Find the external point for each face
+    for (const auto& face : faces) {
+        Point externalPoint = points[0];
+        double maxDistance = 0.0;
+        for (const auto& point : points) {
+            double distance = distanceToFace(point, face);
+            if (distance > maxDistance) {
+                maxDistance = distance;
+                externalPoint = point;
+            }
+        }
+        std::cout << "External point for face (" << face.a.x << ", " << face.a.y << ", " << face.a.z << "), ("
+                  << face.b.x << ", " << face.b.y << ", " << face.b.z << "), ("
+                  << face.c.x << ", " << face.c.y << ", " << face.c.z << "): "
+                  << externalPoint.x << " " << externalPoint.y << " " << externalPoint.z << std::endl;
+    }
 
     return 0;
 }
