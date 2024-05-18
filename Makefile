@@ -1,10 +1,10 @@
 CC = nvcc
 CFLAGS = -arch=sm_52
 
-all: vectorAdd
+all: qhull
 
-vectorAdd: vectorAdd.cu
+qhull: qhull.cu
 	$(CC) $(CFLAGS) -o $@.out $<
 
 clean:
-	rm -f vectorAdd.out
+	rm -f qhull.out
