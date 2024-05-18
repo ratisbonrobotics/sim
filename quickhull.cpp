@@ -2,6 +2,8 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <limits>
+#include <cmath>
 
 struct Point {
     double x, y, z;
@@ -34,10 +36,46 @@ int main() {
 
     file.close();
 
-    // Print the points (optional)
+    // Find the points with minimum and maximum coordinates
+    Point minPoint = points[0];
+    Point maxPoint = points[0];
     for (const auto& point : points) {
-        std::cout << point.x << " " << point.y << " " << point.z << std::endl;
+        minPoint.x = std::min(minPoint.x, point.x);
+        minPoint.y = std::min(minPoint.y, point.y);
+        minPoint.z = std::min(minPoint.z, point.z);
+        maxPoint.x = std::max(maxPoint.x, point.x);
+        maxPoint.y = std::max(maxPoint.y, point.y);
+        maxPoint.z = std::max(maxPoint.z, point.z);
     }
+
+    // Find the points with maximum distance from the min and max points
+    Point maxDistPoint1 = points[0];
+    Point maxDistPoint2 = points[0];
+    double maxDist1 = 0.0;
+    double maxDist2 = 0.0;
+    for (const auto& point : points) {
+        double dist1 = std::sqrt(std::pow(point.x - minPoint.x, 2) +
+                                 std::pow(point.y - minPoint.y, 2) +
+                                 std::pow(point.z - minPoint.z, 2));
+        double dist2 = std::sqrt(std::pow(point.x - maxPoint.x, 2) +
+                                 std::pow(point.y - maxPoint.y, 2) +
+                                 std::pow(point.z - maxPoint.z, 2));
+        if (dist1 > maxDist1) {
+            maxDist1 = dist1;
+            maxDistPoint1 = point;
+        }
+        if (dist2 > maxDist2) {
+            maxDist2 = dist2;
+            maxDistPoint2 = point;
+        }
+    }
+
+    // Print the initial points of the convex hull
+    std::cout << "Initial points of the convex hull:" << std::endl;
+    std::cout << minPoint.x << " " << minPoint.y << " " << minPoint.z << std::endl;
+    std::cout << maxPoint.x << " " << maxPoint.y << " " << maxPoint.z << std::endl;
+    std::cout << maxDistPoint1.x << " " << maxDistPoint1.y << " " << maxDistPoint1.z << std::endl;
+    std::cout << maxDistPoint2.x << " " << maxDistPoint2.y << " " << maxDistPoint2.z << std::endl;
 
     return 0;
 }
