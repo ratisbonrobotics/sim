@@ -93,10 +93,33 @@ void quickhull(const std::vector<Point>& points, std::vector<Face>& faces) {
     }
 }
 
+#include <sstream>  // Include this for std::istringstream
+
 int main() {
     std::ifstream input("rbox_verts.txt");
-    int dim, num_points;
-    input >> dim >> num_points;
+    if (!input) {
+        std::cerr << "Failed to open file." << std::endl;
+        return 1;
+    }
+
+    std::string header;
+    std::getline(input, header);  // Read the entire first line
+    std::istringstream headerStream(header);
+
+    int dim;
+    std::string format, type;
+    headerStream >> dim >> format;
+    std::getline(headerStream, type);  // Read the remaining part of the line as type
+
+    int num_points;
+    input >> num_points;  // Read the number of points from the next line
+
+    if (!input) {
+        std::cerr << "Failed to parse header." << std::endl;
+        return 1;
+    }
+
+    std::printf("%i points\n", num_points);
 
     std::vector<Point> points(num_points);
     for (int i = 0; i < num_points; ++i) {
