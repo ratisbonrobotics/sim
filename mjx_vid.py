@@ -1,7 +1,7 @@
 import mujoco
 from mujoco import mjx
-import imageio
 import jax
+import mediapy as media
 
 xml = """
 <mujoco>
@@ -43,8 +43,6 @@ while mjx_data.time < duration:
         frames.append(pixels)
 
 renderer.close()
-print("done")
+
 # Save video from frames
-with imageio.get_writer('simulation_mjx.mp4', fps=framerate) as video:
-    for frame in frames:
-        video.append_data(frame)
+media.write_video('simulation_mjx.mp4', frames, fps=framerate)
