@@ -1,63 +1,59 @@
 import numpy as np
-import imageio
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from dm_control import suite
+
+# Define the neural network
+class PolicyNetwork(nn.Module):
+    def __init__(self, input_size, output_size, hidden_size=64):
+        super(PolicyNetwork, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.tanh(self.fc2(x))
+        return x
 
 # Load the environment
 env = suite.load(domain_name="cartpole", task_name="swingup", visualize_reward=True)
 
-# Define the action specification
-action_spec = env.action_spec()
-
 # Define the hyperparameters
-num_iterations = 10
-num_episodes_per_iteration = 50
-num_best_episodes = 10
-num_steps_per_episode = 200
+learning_rate = 0.01
+num_episodes = 1000
+discount_factor = 0.99
 
-# Initialize the mean and standard deviation for action distribution
-mean = np.zeros(action_spec.shape)
-std_dev = np.ones(action_spec.shape)
+# Create the policy network
+state_size = env.observation_spec()['position'].shape[0] + env.observation_spec()['velocity'].shape[0]
+action_size = env.action_spec().shape[0]
+policy_net = PolicyNetwork(state_size, action_size)
 
-# Prepare the video writer
-with imageio.get_writer('simulation.mp4', fps=60) as video:
-    for iteration in range(num_iterations):
-        episode_rewards = []
-        episode_actions = []
+# Define the optimizer
+optimizer = optim.Adam(policy_net.parameters(), lr=learning_rate)
 
-        for episode in range(num_episodes_per_iteration):
-            time_step = env.reset()
-            episode_reward = 0
-            episode_action = np.zeros((num_steps_per_episode, *action_spec.shape))
-
-            for step in range(num_steps_per_episode):
-                action = np.random.normal(mean, std_dev)
-                action = np.clip(action, action_spec.minimum, action_spec.maximum)
-                time_step = env.step(action)
-                episode_reward += time_step.reward
-                episode_action[step] = action
-
-                if time_step.last():
-                    break
-
-            episode_rewards.append(episode_reward)
-            episode_actions.append(episode_action)
-
-        # Sort episodes by reward
-        best_episode_indices = np.argsort(episode_rewards)[-num_best_episodes:]
-
-        # Update mean and standard deviation based on best episodes
-        best_actions = [episode_actions[i] for i in best_episode_indices]
-        mean = np.mean(best_actions, axis=(0, 1))
-        std_dev = np.std(best_actions, axis=(0, 1))
-
-        print(f"Iteration {iteration + 1}: Mean Reward = {np.mean(episode_rewards):.2f}")
-
-    # Run the best policy and record the video
+# Training loop
+for episode in range(num_episodes):
     time_step = env.reset()
-    while not time_step.last():
-        action = mean
-        time_step = env.step(action)
-        frame = env.physics.render(height=480, width=640, camera_id=0)
-        video.append_data(frame)
+    state = np.concatenate((time_step.observation['position'], time_step.observation['velocity']))
+    episode_reward = 0
 
-print("Video saved successfully.")
+    while not time_step.last():
+        state_tensor = torch.FloatTensor(state)
+        action = policy_net(state_tensor).detach().numpy()
+        time_step = env.step(action)
+        next_state = np.concatenate((time_step.observation['position'], time_step.observation['velocity']))
+        reward = time_step.reward
+        episode_reward += reward
+
+        # Calculate the loss and update the policy network
+        action_tensor = torch.FloatTensor(action)
+        action_tensor.requires_grad = True
+        loss = -torch.log(action_tensor) * reward
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        state = next_state
+
+    print(f"Episode {episode+1}: Reward = {episode_reward}")
