@@ -23,7 +23,7 @@ mjx_model = mjx.put_model(model)
 
 duration = 3.8  # seconds
 framerate = 60  # Hz
-num_simulations = 4  # Number of parallel simulations
+num_simulations = 8  # Number of parallel simulations
 
 # Function to reset and randomize initial positions
 def reset_and_randomize(rng):
