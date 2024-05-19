@@ -44,3 +44,5 @@ with imageio.get_writer('simulation_mjx.mp4', fps=60) as video:
             pixels = renderer.render()
             frames.append(pixels)
             video.append_data(pixels)
+
+renderer.close()
