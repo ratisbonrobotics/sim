@@ -22,7 +22,6 @@ data = mujoco.MjData(model)
 
 mjx_model = mjx.put_model(model)
 
-
 # Make renderer, render and show the pixels
 renderer = mujoco.Renderer(model)
 
@@ -35,14 +34,17 @@ jit_step = jax.jit(mjx.step)
 frames = []
 mujoco.mj_resetData(model, data)  # Reset state and time.
 mjx_data = mjx.put_data(model, data)
-with imageio.get_writer('simulation_mjx.mp4', fps=60) as video:
-    while mjx_data.time < duration:
-        mjx_data = jit_step(mjx_model, mjx_data)
-        if len(frames) < mjx_data.time * framerate:
-            mj_data = mjx.get_data(model, mjx_data)
-            renderer.update_scene(mj_data)
-            pixels = renderer.render()
-            frames.append(pixels)
-            video.append_data(pixels)
+while mjx_data.time < duration:
+    mjx_data = jit_step(mjx_model, mjx_data)
+    if len(frames) < mjx_data.time * framerate:
+        mj_data = mjx.get_data(model, mjx_data)
+        renderer.update_scene(mj_data)
+        pixels = renderer.render()
+        frames.append(pixels)
 
 renderer.close()
+print("done")
+# Save video from frames
+with imageio.get_writer('simulation_mjx.mp4', fps=framerate) as video:
+    for frame in frames:
+        video.append_data(frame)
