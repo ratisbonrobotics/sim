@@ -43,7 +43,26 @@ datas = [reset_and_randomize(rng) for rng in rngs]
 # Jit the step function for MJX
 jit_step = jax.jit(mjx.step)
 
+# Initialize a renderer
+renderer = mujoco.Renderer(model)
+
+# Simulate and collect frames for each simulation
+videos = []
+
 for data in datas:
+    frames = []
     mjx_data = mjx.put_data(model, data)
     while mjx_data.time < duration:
         mjx_data = jit_step(mjx_model, mjx_data)
+        if len(frames) < mjx_data.time * framerate:
+            mj_data = mjx.get_data(model, mjx_data)
+            renderer.update_scene(mj_data)
+            pixels = renderer.render()
+            frames.append(pixels)
+    videos.append(frames)
+
+renderer.close()
+
+# Save videos from frames for each simulation
+for i, frames in enumerate(videos):
+    media.write_video(f'simulation_mjx_{i + 1}.mp4', frames, fps=framerate)
