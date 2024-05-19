@@ -1,33 +1,41 @@
 import mujoco
-from mujoco import mjx, Renderer
-import numpy as np
-import imageio
+from mujoco import mjx
 
-XML = """
+xml = """
 <mujoco>
   <worldbody>
-    <body>
-      <freejoint/>
-      <geom size=".15" mass="1" type="sphere"/>
+    <light name="top" pos="0 0 1"/>
+    <body name="box_and_sphere" euler="0 0 -30">
+      <joint name="swing" type="hinge" axis="1 -1 0" pos="-.2 -.2 -.2"/>
+      <geom name="red_box" type="box" size=".2 .2 .2" rgba="1 0 0 1"/>
+      <geom name="green_sphere" pos=".2 .2 .2" size=".1" rgba="0 1 0 1"/>
     </body>
   </worldbody>
 </mujoco>
 """
 
-model = mujoco.MjModel.from_xml_string(XML)
-mjx_model = mjx.put_model(model)
+# Make model, data, and renderer
+mj_model = mujoco.MjModel.from_xml_string(xml)
+mj_data = mujoco.MjData(mj_model)
+renderer = mujoco.Renderer(mj_model)
 
-velocities = np.linspace(0.0, 1.0, 2)
-renderer = Renderer(model)
+mjx_model = mjx.put_model(mj_model)
+mjx_data = mjx.put_data(mj_model, mj_data)
 
-with imageio.get_writer('simulation.mp4', fps=30) as video:
-    for vel in velocities:
-        mjx_data = mjx.make_data(mjx_model)
-        mjx_data = mjx_data.replace(qvel=mjx_data.qvel.at[0].set(vel))
-        mjx_data = mjx.step(mjx_model, mjx_data)
-        mj_data = mjx.get_data(model, mjx_data)
-        renderer.render(mj_data)
-        frame = renderer.read_pixels()[0]
-        video.append_data(frame)
+# enable joint visualization option:
+scene_option = mujoco.MjvOption()
+scene_option.flags[mujoco.mjtVisFlag.mjVIS_JOINT] = True
 
-print("Video saved successfully.")
+duration = 3.8  # (seconds)
+framerate = 60  # (Hz)
+
+frames = []
+mujoco.mj_resetData(mj_model, mj_data)
+while mj_data.time < duration:
+  mujoco.mj_step(mj_model, mj_data)
+  if len(frames) < mj_data.time * framerate:
+    renderer.update_scene(mj_data, scene_option=scene_option)
+    pixels = renderer.render()
+    frames.append(pixels)
+
+# Save video

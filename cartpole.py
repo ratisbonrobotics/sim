@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from dm_control import suite
+from dm_contr import suite
 
 # Define the neural network
 class PolicyNetwork(nn.Module):
