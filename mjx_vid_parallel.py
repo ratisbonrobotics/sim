@@ -25,9 +25,14 @@ def batched_step(mjx_data):
   return mjx_data
 
 # Initialize and randomize data objects for each simulation
+def randomize(rng):
+    mj_data = mujoco.MjData(mj_model)
+    mj_data.qpos[:] = jax.random.uniform(rng, (mj_model.nq,), minval=-5.1, maxval=5.1)
+    return mjx.put_data(mj_model, mj_data)
+
 n_sim = 8
-datas = [mjx.make_data(mjx_model) for _ in range(n_sim)]
-models = [mjx_model for _ in range(n_sim)]
+rngs = jax.random.split(jax.random.PRNGKey(0), n_sim)
+datas = [randomize(rng) for rng in rngs]
 
 # Create batched data using jax.tree_map
 batched_data = jax.tree.map(lambda *args: jax.numpy.stack(args), *datas)
