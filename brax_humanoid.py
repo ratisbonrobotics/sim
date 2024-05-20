@@ -173,14 +173,12 @@ for i in range(10):
 video_data = env.render(rollout)
 media.write_video('humanoid.mp4', video_data, fps=60)
 
-exit()
-
 train_fn = functools.partial(
     ppo.train, num_timesteps=30_000_000, num_evals=5, reward_scaling=0.1,
     episode_length=1000, normalize_observations=True, action_repeat=1,
-    unroll_length=10, num_minibatches=32, num_updates_per_batch=8,
-    discounting=0.97, learning_rate=3e-4, entropy_cost=1e-3, num_envs=2048,
-    batch_size=1024, seed=0)
+    unroll_length=10, num_minibatches=16, num_updates_per_batch=8,
+    discounting=0.97, learning_rate=3e-4, entropy_cost=1e-3, num_envs=256,
+    batch_size=128, seed=0)
 
 
 x_data = []
@@ -204,7 +202,7 @@ def progress(num_steps, metrics):
 
   plt.errorbar(
       x_data, y_data, yerr=ydataerr)
-  plt.show()
+  plt.savefig("fig.png")
 
 make_inference_fn, params, _= train_fn(environment=env, progress_fn=progress)
 
