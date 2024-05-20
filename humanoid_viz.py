@@ -168,7 +168,7 @@ train_fn = functools.partial(
 
 make_inference_fn, _, _= train_fn(environment=env)
 
-params = model.load_params('/home/markusheimerl/mjx_brax_policy')
+params = model.load_params('/home/markusheimerl/mjx_brax_policy2')
 inference_fn = make_inference_fn(params)
 jit_inference_fn = jax.jit(inference_fn)
 
