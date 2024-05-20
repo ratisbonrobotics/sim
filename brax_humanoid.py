@@ -172,7 +172,7 @@ video_data = env.render(rollout)
 media.write_video('humanoid.mp4', video_data, fps=60)
 
 train_fn = functools.partial(
-    ppo.train, num_timesteps=3_000_000,
+    ppo.train, num_timesteps=10_000_000,
     num_evals=5, reward_scaling=0.1, episode_length=1000,
     normalize_observations=True, action_repeat=1, unroll_length=10,
     num_minibatches=16, num_updates_per_batch=8, discounting=0.97,
