@@ -158,52 +158,36 @@ env = envs.get_environment(env_name)
 jit_reset = jax.jit(env.reset)
 jit_step = jax.jit(env.step)
 
-# initialize the state
-state = jit_reset(jax.random.PRNGKey(0))
-rollout = [state.pipeline_state]
-
-# grab a trajectory
-for i in range(10):
-  ctrl = -0.1 * jax.numpy.ones(env.sys.nu)
-  state = jit_step(state, ctrl)
-  rollout.append(state.pipeline_state)
-
-video_data = env.render(rollout)
-media.write_video('humanoid.mp4', video_data, fps=60)
-
 train_fn = functools.partial(
-    ppo.train, num_timesteps=3_000_000,
+    ppo.train, num_timesteps=3_000,
     num_evals=5, reward_scaling=0.1, episode_length=1000,
     normalize_observations=True, action_repeat=1, unroll_length=10,
     num_minibatches=16, num_updates_per_batch=8, discounting=0.97,
     learning_rate=3e-4, entropy_cost=1e-3, num_envs=1024, batch_size=512, seed=0
 )
 
-x_data = []
-y_data = []
-ydataerr = []
-times = [datetime.now()]
+make_inference_fn, _, _= train_fn(environment=env)
 
-max_y, min_y = 13000, 0
-def progress(num_steps, metrics):
-  times.append(datetime.now())
-  x_data.append(num_steps)
-  y_data.append(metrics['eval/episode_reward'])
-  ydataerr.append(metrics['eval/episode_reward_std'])
+params = model.load_params('/home/markusheimerl/mjx_brax_policy')
+inference_fn = make_inference_fn(params)
+jit_inference_fn = jax.jit(inference_fn)
 
-  plt.xlim([0, train_fn.keywords['num_timesteps'] * 1.25])
-  plt.ylim([min_y, max_y])
+# initialize the state
+rng = jax.random.PRNGKey(0)
+state = jit_reset(rng)
+rollout = [state.pipeline_state]
 
-  plt.xlabel('# environment steps')
-  plt.ylabel('reward per episode')
-  plt.title(f'y={y_data[-1]:.3f}')
+# grab a trajectory
+n_steps = 500
+render_every = 2
 
-  plt.errorbar(x_data, y_data, yerr=ydataerr)
-  plt.savefig("fig.png")
+for i in range(n_steps):
+  act_rng, rng = jax.random.split(rng)
+  ctrl, _ = jit_inference_fn(state.obs, act_rng)
+  state = jit_step(state, ctrl)
+  rollout.append(state.pipeline_state)
 
-make_inference_fn, params, _= train_fn(environment=env, progress_fn=progress)
+  if state.done:
+    break
 
-print(f'time to jit: {times[1] - times[0]}')
-print(f'time to train: {times[-1] - times[1]}')
-
-model.save_params('/home/markusheimerl/mjx_brax_policy', params)
+media.write_video('humanoid_viz.mp4', env.render(rollout), fps=60)
