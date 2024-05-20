@@ -1,6 +1,7 @@
 import mujoco
 from mujoco import mjx
 import jax
+from PIL import Image
 
 xml = """
 <mujoco>
@@ -15,31 +16,32 @@ xml = """
 </mujoco>
 """
 
-model = mujoco.MjModel.from_xml_string(xml)
-mjx_model = mjx.put_model(model)
+mj_model = mujoco.MjModel.from_xml_string(xml)
+mjx_model = mjx.put_model(mj_model)
 
-@jax.vmap
 def batched_step(mjx_data):
   for _ in range(10):
-    mjx.step(mjx_model, mjx_data)
+    mjx_data = mjx.step(mjx_model, mjx_data)
   return mjx_data
 
-# Function to reset and randomize initial positions
-def reset_and_randomize(rng):
-    data = mujoco.MjData(model)
-    mujoco.mj_resetData(model, data)
-    random_qpos = jax.random.uniform(rng, (model.nq,), minval=-5.1, maxval=5.1)
-    data.qpos[:] = random_qpos
-    return mjx.put_data(model, data)
-
-# Prepare RNG for each simulation
-rng = jax.random.PRNGKey(0)
-rngs = jax.random.split(rng, 4)
-
 # Initialize and randomize data objects for each simulation
-datas = [reset_and_randomize(rng) for rng in rngs]
+n_sim = 8
+datas = [mjx.make_data(mjx_model) for _ in range(n_sim)]
+models = [mjx_model for _ in range(n_sim)]
 
 # Create batched data using jax.tree_map
 batched_data = jax.tree.map(lambda *args: jax.numpy.stack(args), *datas)
+batched_data = jax.vmap(batched_step)(batched_data)
 
-batched_data = batched_step(batched_data)
+# Render result of simulation
+for i in range(n_sim):
+  single_data = jax.tree.map(lambda x: x[i], batched_data)
+
+  renderer = mujoco.Renderer(mj_model)
+  renderer.update_scene(mjx.get_data(mj_model, single_data))
+  pixels = renderer.render()
+  renderer.close()
+
+  # Save pixels as PNG
+  image = Image.fromarray(pixels)
+  image.save(f"imgs/rendered_image_{i}.png")
