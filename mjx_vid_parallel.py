@@ -1,8 +1,6 @@
 import mujoco
 from mujoco import mjx
 import jax
-import mediapy as media
-import numpy as np
 
 xml = """
 <mujoco>
@@ -17,13 +15,14 @@ xml = """
 </mujoco>
 """
 
-# Make model and convert to MJX model
 model = mujoco.MjModel.from_xml_string(xml)
 mjx_model = mjx.put_model(model)
 
-duration = 3.8  # seconds
-framerate = 60  # Hz
-num_simulations = 8  # Number of simulations
+@jax.vmap
+def batched_step(mjx_data):
+  for _ in range(10):
+    mjx.step(mjx_model, mjx_data)
+  return mjx_data
 
 # Function to reset and randomize initial positions
 def reset_and_randomize(rng):
@@ -31,19 +30,16 @@ def reset_and_randomize(rng):
     mujoco.mj_resetData(model, data)
     random_qpos = jax.random.uniform(rng, (model.nq,), minval=-5.1, maxval=5.1)
     data.qpos[:] = random_qpos
-    return data
+    return mjx.put_data(model, data)
 
 # Prepare RNG for each simulation
 rng = jax.random.PRNGKey(0)
-rngs = jax.random.split(rng, num_simulations)
+rngs = jax.random.split(rng, 4)
 
 # Initialize and randomize data objects for each simulation
 datas = [reset_and_randomize(rng) for rng in rngs]
 
-# Jit the step function for MJX
-jit_step = jax.jit(mjx.step)
+# Create batched data using jax.tree_map
+batched_data = jax.tree.map(lambda *args: jax.numpy.stack(args), *datas)
 
-for data in datas:
-    mjx_data = mjx.put_data(model, data)
-    while mjx_data.time < duration:
-        mjx_data = jit_step(mjx_model, mjx_data)
+batched_data = batched_step(batched_data)
