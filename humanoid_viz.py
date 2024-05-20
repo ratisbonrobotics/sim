@@ -190,4 +190,4 @@ for i in range(n_steps):
   if state.done:
     break
 
-media.write_video('humanoid_viz.mp4', env.render(rollout), fps=60)
+media.write_video('humanoid_viz.mp4', env.render(rollout, camera='side'), fps=60)
