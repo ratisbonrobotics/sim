@@ -19,8 +19,8 @@ xml = """
 mj_model = mujoco.MjModel.from_xml_string(xml)
 mjx_model = mjx.put_model(mj_model)
 
-def batched_step(mjx_data):
-  for _ in range(10):
+def batched_step(mjx_data, nsteps):
+  for _ in range(nsteps):
     mjx_data = mjx.step(mjx_model, mjx_data)
   return mjx_data
 
@@ -35,8 +35,10 @@ rngs = jax.random.split(jax.random.PRNGKey(0), n_sim)
 datas = [randomize(rng) for rng in rngs]
 
 # Create batched data using jax.tree_map
+vmapped_step = jax.vmap(batched_step, in_axes=(0, None))
+
 batched_data = jax.tree.map(lambda *args: jax.numpy.stack(args), *datas)
-batched_data = jax.vmap(batched_step)(batched_data)
+batched_data = vmapped_step(batched_data, 1)
 
 # Render result of simulation
 for i in range(n_sim):
@@ -49,4 +51,19 @@ for i in range(n_sim):
 
   # Save pixels as PNG
   image = Image.fromarray(pixels)
-  image.save(f"imgs/rendered_image_{i}.png")
+  image.save(f"imgs/rendered_image_pre_{i}.png")
+
+batched_data = vmapped_step(batched_data, 100)
+
+# Render result of simulation
+for i in range(n_sim):
+  single_data = jax.tree.map(lambda x: x[i], batched_data)
+
+  renderer = mujoco.Renderer(mj_model)
+  renderer.update_scene(mjx.get_data(mj_model, single_data))
+  pixels = renderer.render()
+  renderer.close()
+
+  # Save pixels as PNG
+  image = Image.fromarray(pixels)
+  image.save(f"imgs/rendered_image_post_{i}.png")
