@@ -174,12 +174,12 @@ video_data = env.render(rollout)
 media.write_video('humanoid.mp4', video_data, fps=60)
 
 train_fn = functools.partial(
-    ppo.train, num_timesteps=30_000_000, num_evals=5, reward_scaling=0.1,
-    episode_length=1000, normalize_observations=True, action_repeat=1,
-    unroll_length=10, num_minibatches=16, num_updates_per_batch=8,
-    discounting=0.97, learning_rate=3e-4, entropy_cost=1e-3, num_envs=256,
-    batch_size=128, seed=0)
-
+    ppo.train, num_timesteps=3_000_000,
+    num_evals=5, reward_scaling=0.1, episode_length=1000,
+    normalize_observations=True, action_repeat=1, unroll_length=10,
+    num_minibatches=16, num_updates_per_batch=8, discounting=0.97,
+    learning_rate=3e-4, entropy_cost=1e-3, num_envs=1024, batch_size=512, seed=0
+)
 
 x_data = []
 y_data = []
@@ -200,11 +200,12 @@ def progress(num_steps, metrics):
   plt.ylabel('reward per episode')
   plt.title(f'y={y_data[-1]:.3f}')
 
-  plt.errorbar(
-      x_data, y_data, yerr=ydataerr)
+  plt.errorbar(x_data, y_data, yerr=ydataerr)
   plt.savefig("fig.png")
 
 make_inference_fn, params, _= train_fn(environment=env, progress_fn=progress)
 
 print(f'time to jit: {times[1] - times[0]}')
 print(f'time to train: {times[-1] - times[1]}')
+
+model.save_params('/home/markusheimerl/mjx_brax_policy', params)
