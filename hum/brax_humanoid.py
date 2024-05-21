@@ -1,4 +1,5 @@
 import jax
+import time
 import mujoco
 import functools
 from brax import envs
@@ -80,6 +81,15 @@ train_fn = functools.partial(
     num_envs=1024, batch_size=512, seed=0
 )
 
+start_time = time.time()
+
+print(f"Registering environment... ({time.time() - start_time:.2f}s)")
 envs.register_environment("humanoid_mjx", Humanoid)
+
+print(f"Starting training... ({time.time() - start_time:.2f}s)")
 make_inference_fn, params, _ = train_fn(environment=envs.get_environment("humanoid_mjx"))
+
+print(f"Training completed. Saving parameters... ({time.time() - start_time:.2f}s)")
 model.save_params("/home/markusheimerl/mjx_brax_policy_v2", params)
+
+print(f"Parameters saved. ({time.time() - start_time:.2f}s)")
