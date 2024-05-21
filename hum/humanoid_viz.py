@@ -1,4 +1,5 @@
 import jax
+import time
 import mujoco
 import mediapy
 import functools
@@ -81,14 +82,16 @@ train_fn = functools.partial(
     num_envs=1, batch_size=1, seed=0
 )
 
-print("Registering enviornment...")
+start_time = time.time()
+
+print(f"Registering environment... ({time.time() - start_time:.2f}s)")
 envs.register_environment("humanoid_mjx", Humanoid)
 env = envs.get_environment("humanoid_mjx")
-print("Running pseudo training...")
+print(f"Running pseudo training... ({time.time() - start_time:.2f}s)")
 make_inference_fn, params, _ = train_fn(environment=env)
-print("Loading...")
+print(f"Loading... ({time.time() - start_time:.2f}s)")
 params = model.load_params("/home/markusheimerl/mjx_brax_policy_v2")
-print("Compiling...")
+print(f"Compiling... ({time.time() - start_time:.2f}s)")
 inference_fn = make_inference_fn(params)
 jit_inference_fn = jax.jit(inference_fn)
 
@@ -100,8 +103,8 @@ state = jit_reset(rng)
 rollout = [state.pipeline_state]
 
 # grab a trajectory
-n_steps = 100
-print("Rendering...")
+n_steps = 1000
+print(f"Rendering... ({time.time() - start_time:.2f}s)")
 
 for i in range(n_steps):
     act_rng, rng = jax.random.split(rng)
@@ -112,3 +115,4 @@ for i in range(n_steps):
         break
 
 mediapy.write_video("humanoid_viz.mp4", env.render(rollout, camera="side"), fps=60)
+print(f"Done ({time.time() - start_time:.2f}s)")
