@@ -49,7 +49,7 @@ class Humanoid(PipelineEnv):
         data0 = state.pipeline_state
         data = self.pipeline_step(data0, action)
 
-        com_before = data0.subtree_com[1]
+        com_before = data0.subtree_com[1] # center of mass
         com_after = data.subtree_com[1]
         velocity = (com_after - com_before) / self.dt
         forward_reward = 1.25 * velocity[0]
