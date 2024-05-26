@@ -24,6 +24,9 @@ xml_2dof = """
             <joint axis="0 0 1" pos="0 0 -0.1" limited="false" name="rotz" type="hinge"/>
             <geom name="ball_geom" size="0.1" type="sphere" conaffinity="0" contype="1"/>
         </body>
+        <!-- Define obstacle geometries -->
+        <geom name="obst_0" size="0.1" type="capsule" fromto="0 2 0 0 2 1" conaffinity="1" contype="0"/>
+        <geom name="obst_1" size="0.1" type="capsule" fromto="0.5 2 0 0.5 2 1" conaffinity="1" contype="0"/>
     </worldbody> 
     <actuator>
         <motor ctrllimited="true" ctrlrange="-1.0 1.0" gear="50.0" joint="rootx"/>
@@ -40,27 +43,15 @@ xml_2dof = """
 </mujoco>
 """
 
-obstacle_locs = np.array([[0, 2], [0.5, 2]])
-root = ET.fromstring(xml_2dof)
-for i, cl in enumerate(obstacle_locs):
-    xml_obst = f"""<geom name="obst_{i}" size="0.1" type="capsule" fromto="{cl[0]} {cl[1]} 0 {cl[0]} {cl[1]} 1" conaffinity="1" contype="0"/>"""
-    root.find("worldbody").append(ET.fromstring(xml_obst))
-xml_2dof = ET.tostring(root)    
-
 model = mujoco.MjModel.from_xml_string(xml_2dof)
 renderer = mujoco.Renderer(model)
 data = mujoco.MjData(model)
-mujoco.mj_forward(model, data)
-renderer.update_scene(data, "fwd")
-media.write_image("depth/img.png", renderer.render())
 
 mx = mjx.put_model(model)
-data = mujoco.MjData(model)
 dx = mjx.put_data(model, data)
 dx = mjx.forward(mx, dx)
 
-normalise = lambda v: v / jp.linalg.norm(v)
-b_normalise = jax.vmap(jax.vmap(normalise))
+b_normalise = jax.vmap(jax.vmap(lambda v: v / jp.linalg.norm(v)))
 
 dcam_pars = {'fov_y': 45, 'p_x': 100, 'p_y': 100}
 
