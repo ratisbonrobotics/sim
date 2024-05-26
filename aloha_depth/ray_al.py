@@ -1,56 +1,43 @@
 import jax
 import jax.numpy as jp
-from etils import epath
-import mujoco
+from mujoco import mjx
 from brax.io import mjcf
+
+def _load_sys(path: str) -> mjcf.RootElement:
+  xml = path.read_text()
+  model = mjx.load_model_from_xml(xml)
+  data = mjx.MjData(model)
+  return model, data
+
+model, data = _load_sys('./mujoco_menagerie/aloha/mjx_single_cube.xml')
+
+width, height = 128, 128
+fovy = jp.deg2rad(58)
+f = 0.1
+cam_id = 1
+
+h_ip = jp.tan(fovy/2) * 2 * f
+w_ip = h_ip * (width / height)
+delta = w_ip / (2 * width)
+xs = jp.linspace(-w_ip/2 + delta, w_ip/2 - delta, width)
+ys = jp.flip(jp.linspace(-h_ip/2 + delta, h_ip/2 - delta, height))
+xs, ys = jp.tile(xs, height), jp.repeat(ys, width)
+
+cam_x, cam_y = xs, ys
+cam_vec = jax.vmap(lambda x, y: data.cam_xmat[cam_id] @ jp.array([x, y, -f]))(cam_x, cam_y)
+cam_vec = jax.vmap(lambda x: x / jp.linalg.norm(x))(cam_vec)
+cam_pos = data.cam_xpos[cam_id]
+
+@jax.jit
+def render():
+  geomgroup = [True, True, True, False, False, False]
+  def fn(_, vec):
+    dist, _ = mjx.ray(model, data, cam_pos, vec, geomgroup)
+    return None, dist
+  _, dist = jax.lax.scan(fn, None, cam_vec)
+  return dist
+
+depth = render().reshape(height, width)
+
 from PIL import Image
-
-xmlGLOB = """
-<mujoco>
-  <worldbody>
-    <light name="top" pos="0 0 1"/>
-    <body name="box_and_sphere" euler="0 0 -30">
-      <joint name="swing" type="hinge" axis="1 -1 0" pos="-.2 -.2 -.2"/>
-      <geom name="red_box" type="box" size=".2 .2 .2" rgba="1 0 0 1"/>
-      <geom name="green_sphere" pos=".2 .2 .2" size=".1" rgba="0 1 0 1"/>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-
-# Load the Mujoco XML model and initialize the system
-def load_system():
-    model = mujoco.MjModel.from_xml_string(xmlGLOB)
-    return mjcf.load_model(model)
-
-# Initialize the camera and perform ray tracing to render the scene
-def render(sys, cam_id=1, width=128, height=128):
-    cam_xmat = sys.default_camera.xmat.reshape(3, 3)
-    cam_xpos = sys.default_camera.xpos
-    fovy = sys.default_camera.fovy
-    f = sys.default_camera.f
-    h_ip = jp.tan(fovy / 2) * 2 * f
-    w_ip = h_ip * (width / height)
-    delta = w_ip / (2 * width)
-    xs = jp.linspace(-w_ip / 2 + delta, w_ip / 2 - delta, width)
-    ys = jp.flip(jp.linspace(-h_ip / 2 + delta, h_ip / 2 - delta, height))
-    cam_vecs = jp.stack(jp.meshgrid(xs, ys, indexing='xy'), axis=-1)
-    cam_vecs = jp.concatenate([cam_vecs, -f * jp.ones_like(cam_vecs[..., :1])], axis=-1)
-    cam_vecs = jp.einsum('ij,klj->kli', cam_xmat, cam_vecs)
-    cam_vecs = cam_vecs / jp.linalg.norm(cam_vecs, axis=-1, keepdims=True)
-
-    def ray_fn(vec):
-        dist, _ = mujoco.mjx.ray(sys, cam_xpos, vec, geomgroup=[True]*sys.ngeom)
-        return dist
-
-    depths = jax.vmap(ray_fn)(cam_vecs.reshape(-1, 3)).reshape(height, width)
-    return depths
-
-# Main function to setup and render the scene
-def main():
-    sys = load_system()
-    depth = render(sys)
-    Image.fromarray((depth * 100).astype('uint8'), 'L').show()
-
-if __name__ == '__main__':
-    main()
+Image.fromarray(depth * 100, "F").convert("RGB").resize((256, 256))
