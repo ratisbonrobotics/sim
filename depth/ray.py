@@ -55,7 +55,7 @@ b_normalise = jax.vmap(jax.vmap(lambda v: v / jp.linalg.norm(v)))
 
 dcam_pars = {'fov_y': 45, 'p_x': 100, 'p_y': 100}
 
-def get_vecs_cf(dcam_pars):
+def compute_camera_field_of_view_vectors(dcam_pars):
     fov_y, p_x, p_y = dcam_pars['fov_y'], dcam_pars['p_x'], dcam_pars['p_y']
     _fov_y, f = np.deg2rad(fov_y), 0.1
     h_ip, w_ip = np.tan(_fov_y/2)*2*f, np.tan(_fov_y/2)*2*f * (p_x/p_y)
@@ -65,14 +65,14 @@ def get_vecs_cf(dcam_pars):
     xx, yy = np.meshgrid(x_coords_ip, y_coords_ip)
     return np.concatenate([np.expand_dims(xx, axis=2), np.expand_dims(yy, axis=2), -1 * np.ones(xx.shape + (1,)) * f], axis=2)
 
-def cf2gf(vecs_cf, mjx_data, cam_ind):
+def convert_camera_to_world_coordinates(vecs_cf, mjx_data, cam_ind):
     cam_bases = mjx_data.cam_xmat[cam_ind]
     vecs_gf = np.squeeze(np.matmul(cam_bases, np.expand_dims(vecs_cf, 3)))
     return b_normalise(vecs_gf)
 
 mask = None
-vecs_cf = get_vecs_cf(dcam_pars)
-vecs_gf = cf2gf(vecs_cf, dx, 0)
+vecs_cf = compute_camera_field_of_view_vectors(dcam_pars)
+vecs_gf = convert_camera_to_world_coordinates(vecs_cf, dx, 0)
 
 f_ray = jax.jit(partial(mjx.ray, geomgroup = mask))
 in_ax = (None,)*3 + (0,)
@@ -97,7 +97,7 @@ while data.time < duration:
         renderer.update_scene(data, "fwd")
         frames.append(renderer.render())
         dx = mjx.put_data(model, data)
-        vecs_gf = cf2gf(vecs_cf, dx, 0)
+        vecs_gf = convert_camera_to_world_coordinates(vecs_cf, dx, 0)
         t0 = time.time()
         dist, geom = f_bdmap(mx, dx, vecs_gf, jp.zeros(num_envs))
         dist.block_until_ready()
