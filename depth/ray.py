@@ -2,6 +2,7 @@ import jax
 import mujoco
 from mujoco import mjx
 import typing
+from PIL import Image
 
 xml = """
 <mujoco>
@@ -65,4 +66,14 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
 
 # simulate
 mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
-print(depth)
+
+# Reshape depth values to match the resolution
+depth_values = jax.device_get(depth[0]).reshape(resolution)
+
+# Normalize depth values to [0, 255]
+depth_normalized = (depth_values - depth_values.min()) / (depth_values.max() - depth_values.min())
+depth_normalized = (depth_normalized * 255).astype(jax.numpy.uint8)
+
+# Create a PIL Image object and save as PNG
+depth_image = Image.fromarray(depth_normalized)
+depth_image.save("depth.png")
