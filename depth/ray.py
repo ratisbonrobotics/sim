@@ -38,10 +38,10 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
     def body_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         mjx_m, mjx_d, depth = carry
         mjx_d = mjx.step(mjx_m, mjx_d)
-        depth = mjx.ray(mjx_m, mjx_d, jax.lax.full((3,), 0.0, dtype=float), jax.lax.full((3,), 1.0, dtype=float))
+        depth = mjx.ray(mjx_m, mjx_d, jax.numpy.array([0.0, 0.0, 0.0], dtype=float), jax.numpy.array([1.0, 1.0, 1.0], dtype=float))
         return mjx_m, mjx_d, depth
 
-    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.lax.full((), 0.0, dtype=float), jax.lax.full((), 0, dtype=int))))
+    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((), dtype=float), jax.numpy.zeros((), dtype=int))))
 
 # simulate
 mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
