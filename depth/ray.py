@@ -34,17 +34,26 @@ mjx_data = mjx.put_data(model, data)
 vray = jax.vmap(mjx.ray, (None, None, None, 0), (0, 0))
 
 # Define camera parameters
-fov = 60.0  # Field of view in degrees
-resolution = (64, 64)  # Camera resolution (width, height)
+fov = 70.0  # Field of view in degrees
+resolution = (512, 512)  # Camera resolution (width, height)
 
 # Generate camera directions
-def generate_camera_directions(fov, resolution):
+def generate_camera_directions(fov, resolution, lookat):
     fov_rad = jax.numpy.deg2rad(fov)
     aspect_ratio = resolution[0] / resolution[1]
     x = jax.numpy.linspace(-0.5, 0.5, resolution[0]) * jax.numpy.tan(fov_rad / 2) * aspect_ratio
     y = jax.numpy.linspace(-0.5, 0.5, resolution[1]) * jax.numpy.tan(fov_rad / 2)
     xx, yy = jax.numpy.meshgrid(x, y)
-    directions = jax.numpy.stack((xx, yy, -jax.numpy.ones_like(xx)), axis=-1)
+    
+    # Compute the camera's right and up vectors based on the lookat vector
+    lookat = jax.numpy.array(lookat)
+    lookat /= jax.numpy.linalg.norm(lookat)
+    right = jax.numpy.cross(jax.numpy.array([0, 1, 0]), lookat)
+    right /= jax.numpy.linalg.norm(right)
+    up = jax.numpy.cross(lookat, right)
+    
+    # Compute the camera directions using the right and up vectors
+    directions = xx[..., jax.numpy.newaxis] * right + yy[..., jax.numpy.newaxis] * up - lookat
     directions /= jax.numpy.linalg.norm(directions, axis=-1, keepdims=True)
     return directions
 
@@ -58,7 +67,7 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
         mjx_m, mjx_d, depth = carry
         mjx_d = mjx.step(mjx_m, mjx_d)
         origin = jax.numpy.array([0.0, 0.0, 0.0], dtype=float)
-        directions = generate_camera_directions(fov, resolution).reshape(-1,3)
+        directions = generate_camera_directions(fov, resolution, [0.0,0.0,-1.0]).reshape(-1,3)
         depth = vray(mjx_m, mjx_d, origin, directions)
         return mjx_m, mjx_d, depth
 
