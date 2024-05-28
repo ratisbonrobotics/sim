@@ -37,10 +37,10 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
     def body_fun(carry):
         mjx_m, mjx_d, depth = carry
         mjx_d = mjx.step(mjx_m, mjx_d)
-        depth = mjx.ray(mjx_m, mjx_d, jax.numpy.asarray([0.0,0.0,0.0]), jax.numpy.asarray([1.0,1.0,1.0]))
+        depth = mjx.ray(mjx_m, mjx_d, jax.lax.full((3,), 0.0, dtype=jax.numpy.float32), jax.lax.full((3,), 1.0, dtype=jax.numpy.float32))
         return mjx_m, mjx_d, depth
 
-    depth = mjx.ray(mjx_m, mjx_d, jax.numpy.asarray([0.0,0.0,0.0]), jax.numpy.asarray([1.0,1.0,1.0]))
+    depth = (jax.lax.full((), 0.0, dtype=jax.numpy.float32), jax.lax.full((), 0, dtype=jax.numpy.int32))
     mjx_m, mjx_d, depth = jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, depth))
     return mjx_m, mjx_d, depth
 
