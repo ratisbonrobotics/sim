@@ -1,6 +1,7 @@
 import jax
 import mujoco
 from mujoco import mjx
+import typing
 
 xml = """
 <mujoco>
@@ -30,19 +31,17 @@ mjx_data = mjx.put_data(model, data)
 
 # Define sim function
 def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
-    def cond_fun(carry):
+    def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         _, mjx_d, _ = carry
         return mjx_d.time < 3.8
 
-    def body_fun(carry):
+    def body_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         mjx_m, mjx_d, depth = carry
         mjx_d = mjx.step(mjx_m, mjx_d)
-        depth = mjx.ray(mjx_m, mjx_d, jax.lax.full((3,), 0.0, dtype=jax.numpy.float32), jax.lax.full((3,), 1.0, dtype=jax.numpy.float32))
+        depth = mjx.ray(mjx_m, mjx_d, jax.lax.full((3,), 0.0, dtype=float), jax.lax.full((3,), 1.0, dtype=float))
         return mjx_m, mjx_d, depth
 
-    depth = (jax.lax.full((), 0.0, dtype=jax.numpy.float32), jax.lax.full((), 0, dtype=jax.numpy.int32))
-    mjx_m, mjx_d, depth = jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, depth))
-    return mjx_m, mjx_d, depth
+    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.lax.full((), 0.0, dtype=float), jax.lax.full((), 0, dtype=int))))
 
 # simulate
 mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
