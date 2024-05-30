@@ -3,6 +3,8 @@ import mujoco
 from mujoco import mjx
 import typing
 
+jax.config.update("jax_compilation_cache_dir", "/home/markusheimerl/sim/cache")
+
 xml = """
 <mujoco>
   <asset>
@@ -19,6 +21,7 @@ xml = """
   </worldbody>
 </mujoco>
 """
+CAMERASIZE = 128*128
 
 # Make model and data
 model = mujoco.MjModel.from_xml_string(xml)
@@ -34,6 +37,11 @@ vray = jax.vmap(mjx.ray, (None, None, 0, 0), (0, 0))
 
 # Define sim function
 def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
+
+    a = jax.numpy.linspace(-1, 1, CAMERASIZE)
+    b = jax.numpy.column_stack((a,a,jax.numpy.ones((CAMERASIZE,))))
+    c = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE,)),jax.numpy.zeros((CAMERASIZE,)),-jax.numpy.ones((CAMERASIZE,))))
+
     def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         _, mjx_d, _ = carry
         return mjx_d.time < 0.01
@@ -41,13 +49,38 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
     def body_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         mjx_m, mjx_d, depth = carry
         mjx_d = mjx.step(mjx_m, mjx_d)
-        origin = jax.numpy.array([[0.0, 0.20, 1.0]], dtype=float)
+        origin = jax.numpy.array([[0.0, 0.0, 1.0]], dtype=float)
         directions = jax.numpy.array([[0.0, 0.0, -1.0]], dtype=float)
-        depth = vray(mjx_m, mjx_d, origin, directions)
+        depth = vray(mjx_m, mjx_d, b, c)
         return mjx_m, mjx_d, depth
 
-    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((1), dtype=float), jax.numpy.zeros((1), dtype=int))))
+    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((CAMERASIZE), dtype=float), jax.numpy.zeros((CAMERASIZE), dtype=int))))
 
 # simulate
 mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
+depth = jax.device_get(depth)
 print(depth)
+
+from PIL import Image
+import numpy as np
+
+# Convert depth[0] to a numpy array
+depth_image = np.array(depth[0])
+
+# Determine the size of the square image
+size = int(np.sqrt(depth_image.shape[0]))
+
+# Reshape the depth array into a square image
+depth_image = depth_image.reshape((size, size))
+
+# Normalize the depth values to the range [0, 255]
+depth_image = (depth_image - depth_image.min()) / (depth_image.max() - depth_image.min()) * 255
+
+# Convert the depth image to uint8 data type
+depth_image = depth_image.astype(np.uint8)
+
+# Create a PIL Image from the depth array
+image = Image.fromarray(depth_image)
+
+# Save the image as a PNG file
+image.save("depth_image.png")
