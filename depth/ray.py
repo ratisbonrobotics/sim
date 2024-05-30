@@ -3,7 +3,7 @@ import mujoco
 from mujoco import mjx
 import typing
 
-jax.config.update("jax_compilation_cache_dir", "/home/markusheimerl/sim/cache")
+#jax.config.update("jax_compilation_cache_dir", "/home/markusheimerl/sim/cache")
 
 xml = """
 <mujoco>
@@ -21,7 +21,7 @@ xml = """
   </worldbody>
 </mujoco>
 """
-CAMERASIZE = 128*128
+CAMERASIZE = 8*8
 
 # Make model and data
 model = mujoco.MjModel.from_xml_string(xml)
@@ -39,8 +39,10 @@ vray = jax.vmap(mjx.ray, (None, None, 0, 0), (0, 0))
 def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
 
     a = jax.numpy.linspace(-1, 1, CAMERASIZE)
-    b = jax.numpy.column_stack((a,a,jax.numpy.ones((CAMERASIZE,))))
-    c = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE,)),jax.numpy.zeros((CAMERASIZE,)),-jax.numpy.ones((CAMERASIZE,))))
+    x, y = jax.numpy.meshgrid(a, a)
+    b = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE*CAMERASIZE)], axis=1)
+    c = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE*CAMERASIZE,)),jax.numpy.zeros((CAMERASIZE*CAMERASIZE,)),-jax.numpy.ones((CAMERASIZE*CAMERASIZE,))))
+
 
     def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         _, mjx_d, _ = carry
@@ -54,7 +56,7 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
         depth = vray(mjx_m, mjx_d, b, c)
         return mjx_m, mjx_d, depth
 
-    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((CAMERASIZE), dtype=float), jax.numpy.zeros((CAMERASIZE), dtype=int))))
+    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((CAMERASIZE*CAMERASIZE), dtype=float), jax.numpy.zeros((CAMERASIZE*CAMERASIZE), dtype=int))))
 
 # simulate
 mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
