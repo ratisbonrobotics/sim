@@ -5,7 +5,7 @@ xml = """
 <mujoco>
   <worldbody>
     <light name="top" pos="0 0 1"/>
-    <camera name="cam" pos="0 -1 0" euler="90 0 0"/>
+    <camera name="cam" pos="0 0 1" xyaxes="0 1 0 -1 0 0"/>
     <body name="box_and_sphere">
       <joint name="swing" type="hinge" axis="1 -1 0" pos=".2 .0 .2"/>
       <geom name="red_box" type="box" pos="0 0 0" size=".2 .2 .2" rgba="1 0 0 1"/>

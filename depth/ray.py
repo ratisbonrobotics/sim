@@ -11,11 +11,10 @@ xml = """
   </asset>
   <worldbody>
     <light name="top" pos="0 0 1"/>
-    <camera name="cam" pos="0 -1 0" euler="90 0 0"/>
     <body name="box_and_sphere">
-      <joint name="swing" type="hinge" axis="1 -1 0" pos=".2 .2 .2"/>
+      <joint name="swing" type="hinge" axis="1 -1 0" pos=".2 .0 .2"/>
       <geom name="red_box" type="box" pos="0 0 0" size=".2 .2 .2" rgba="1 0 0 1"/>
-      <geom name="green_sphere" pos=".2 .2 .2" size=".01" rgba="0 1 0 1"/>
+      <geom name="green_sphere" pos=".2 .0 .2" size=".01" rgba="0 1 0 1"/>
     </body>
   </worldbody>
 </mujoco>
@@ -37,17 +36,17 @@ vray = jax.vmap(mjx.ray, (None, None, 0, 0), (0, 0))
 def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
     def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         _, mjx_d, _ = carry
-        return mjx_d.time < 3.8
+        return mjx_d.time < 0.01
 
     def body_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         mjx_m, mjx_d, depth = carry
         mjx_d = mjx.step(mjx_m, mjx_d)
-        origin = jax.numpy.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=float)
-        directions = jax.numpy.array([[1.0, 1.0, 1.0], [1.0, 0.5, 1.0]], dtype=float)
+        origin = jax.numpy.array([[0.0, 0.20, 1.0]], dtype=float)
+        directions = jax.numpy.array([[0.0, 0.0, -1.0]], dtype=float)
         depth = vray(mjx_m, mjx_d, origin, directions)
         return mjx_m, mjx_d, depth
 
-    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((2), dtype=float), jax.numpy.zeros((2), dtype=int))))
+    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((1), dtype=float), jax.numpy.zeros((1), dtype=int))))
 
 # simulate
 mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
