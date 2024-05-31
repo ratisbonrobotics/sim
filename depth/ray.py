@@ -21,7 +21,7 @@ xml = """
   </worldbody>
 </mujoco>
 """
-CAMERASIZE = 8*8
+CAMERASIZE = 128
 
 # Make model and data
 model = mujoco.MjModel.from_xml_string(xml)
@@ -37,7 +37,7 @@ vray = jax.vmap(mjx.ray, (None, None, 0, 0), (0, 0))
 
 # Define sim function
 def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
-  x, y = jax.numpy.meshgrid(jax.numpy.linspace(-1, 1, CAMERASIZE), jax.numpy.linspace(-1, 1, CAMERASIZE))
+  x, y = jax.numpy.meshgrid(jax.numpy.linspace(-0.5, 0.5, CAMERASIZE), jax.numpy.linspace(-0.5, 0.5, CAMERASIZE))
   origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE**2)], axis=1)
   directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.zeros((CAMERASIZE**2,)),-jax.numpy.ones((CAMERASIZE**2,))))
   counter = 0
@@ -76,6 +76,10 @@ depth_array = np.array(depth)
 # Determine the size of the square image
 size = int(np.sqrt(depth_array.shape[1]))
 
+# Find the minimum and maximum depth values across all frames
+min_depth = depth_array.min()
+max_depth = depth_array.max()
+
 # Create a list to store the frames of the GIF
 frames = []
 
@@ -83,8 +87,8 @@ for i in range(depth_array.shape[0]):
     # Reshape the depth array into a square image
     depth_image = depth_array[i].reshape((size, size))
 
-    # Normalize the depth values to the range [0, 255]
-    depth_image = (depth_image - depth_image.min()) / (depth_image.max() - depth_image.min()) * 255
+    # Normalize the depth values to the range [0, 255] based on the global min and max
+    depth_image = (depth_image - min_depth) / (max_depth - min_depth) * 255
 
     # Convert the depth image to uint8 data type
     depth_image = depth_image.astype(np.uint8)
