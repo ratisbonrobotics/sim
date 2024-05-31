@@ -38,10 +38,9 @@ vray = jax.vmap(mjx.ray, (None, None, 0, 0), (0, 0))
 # Define sim function
 def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
 
-    a = jax.numpy.linspace(-1, 1, CAMERASIZE)
-    x, y = jax.numpy.meshgrid(a, a)
-    origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE*CAMERASIZE)], axis=1)
-    directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE*CAMERASIZE,)),jax.numpy.zeros((CAMERASIZE*CAMERASIZE,)),-jax.numpy.ones((CAMERASIZE*CAMERASIZE,))))
+    x, y = jax.numpy.meshgrid(jax.numpy.linspace(-1, 1, CAMERASIZE), jax.numpy.linspace(-1, 1, CAMERASIZE))
+    origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE**2)], axis=1)
+    directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.zeros((CAMERASIZE**2,)),-jax.numpy.ones((CAMERASIZE**2,))))
 
     def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         _, mjx_d, _ = carry
@@ -53,7 +52,7 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
         depth = vray(mjx_m, mjx_d, origins, directions)
         return mjx_m, mjx_d, depth
 
-    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((CAMERASIZE*CAMERASIZE), dtype=float), jax.numpy.zeros((CAMERASIZE*CAMERASIZE), dtype=int))))
+    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((CAMERASIZE**2), dtype=float), jax.numpy.zeros((CAMERASIZE**2), dtype=int))))
 
 # simulate
 mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
