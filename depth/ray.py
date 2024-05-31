@@ -40,9 +40,8 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
 
     a = jax.numpy.linspace(-1, 1, CAMERASIZE)
     x, y = jax.numpy.meshgrid(a, a)
-    b = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE*CAMERASIZE)], axis=1)
-    c = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE*CAMERASIZE,)),jax.numpy.zeros((CAMERASIZE*CAMERASIZE,)),-jax.numpy.ones((CAMERASIZE*CAMERASIZE,))))
-
+    origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE*CAMERASIZE)], axis=1)
+    directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE*CAMERASIZE,)),jax.numpy.zeros((CAMERASIZE*CAMERASIZE,)),-jax.numpy.ones((CAMERASIZE*CAMERASIZE,))))
 
     def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         _, mjx_d, _ = carry
@@ -51,9 +50,7 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
     def body_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         mjx_m, mjx_d, depth = carry
         mjx_d = mjx.step(mjx_m, mjx_d)
-        origin = jax.numpy.array([[0.0, 0.0, 1.0]], dtype=float)
-        directions = jax.numpy.array([[0.0, 0.0, -1.0]], dtype=float)
-        depth = vray(mjx_m, mjx_d, b, c)
+        depth = vray(mjx_m, mjx_d, origins, directions)
         return mjx_m, mjx_d, depth
 
     return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((CAMERASIZE*CAMERASIZE), dtype=float), jax.numpy.zeros((CAMERASIZE*CAMERASIZE), dtype=int))))
