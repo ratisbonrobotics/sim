@@ -42,17 +42,17 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
     origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE**2)], axis=1)
     directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.zeros((CAMERASIZE**2,)),-jax.numpy.ones((CAMERASIZE**2,))))
 
-    def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, jax.Array]):
+    def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         _, mjx_d, _ = carry
         return mjx_d.time < 0.01
 
-    def body_fun(carry : typing.Tuple[mjx.Model, mjx.Data, jax.Array]):
+    def body_fun(carry : typing.Tuple[mjx.Model, mjx.Data, typing.Tuple[jax.Array, jax.Array]]):
         mjx_m, mjx_d, depth = carry
         mjx_d = mjx.step(mjx_m, mjx_d)
-        depth = vray(mjx_m, mjx_d, origins, directions)[0]
+        depth = vray(mjx_m, mjx_d, origins, directions)
         return mjx_m, mjx_d, depth
 
-    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, jax.numpy.zeros((CAMERASIZE**2), dtype=float)))
+    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, (jax.numpy.zeros((CAMERASIZE**2), dtype=float), jax.numpy.zeros((CAMERASIZE**2), dtype=int))))
 
 # simulate
 mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
@@ -63,7 +63,7 @@ from PIL import Image
 import numpy as np
 
 # Convert depth[0] to a numpy array
-depth_image = np.array(depth)
+depth_image = np.array(depth[0])
 
 # Determine the size of the square image
 size = int(np.sqrt(depth_image.shape[0]))
