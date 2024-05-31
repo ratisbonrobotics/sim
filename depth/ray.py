@@ -41,21 +41,24 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
     x, y = jax.numpy.meshgrid(jax.numpy.linspace(-1, 1, CAMERASIZE), jax.numpy.linspace(-1, 1, CAMERASIZE))
     origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE**2)], axis=1)
     directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.zeros((CAMERASIZE**2,)),-jax.numpy.ones((CAMERASIZE**2,))))
+    counter = 0
 
-    def cond_fun(carry : typing.Tuple[mjx.Model, mjx.Data, jax.Array]):
-        _, mjx_d, _ = carry
-        return mjx_d.time < 0.01
+    def cond_fun(carry : typing.Tuple[int, mjx.Model, mjx.Data, jax.Array]):
+        counter, _, mjx_d, _ = carry
+        return counter < 5 # mjx_d.time < 0.01
 
-    def body_fun(carry : typing.Tuple[mjx.Model, mjx.Data, jax.Array]):
-        mjx_m, mjx_d, depth = carry
+    def body_fun(carry : typing.Tuple[int, mjx.Model, mjx.Data, jax.Array]):
+        counter, mjx_m, mjx_d, depth = carry
+        counter += 1
         mjx_d = mjx.step(mjx_m, mjx_d)
         depth = vray(mjx_m, mjx_d, origins, directions)[0]
-        return mjx_m, mjx_d, depth
+        return counter, mjx_m, mjx_d, depth
 
-    return jax.lax.while_loop(cond_fun, body_fun, (mjx_m, mjx_d, jax.numpy.zeros((CAMERASIZE**2), dtype=float)))
+    return jax.lax.while_loop(cond_fun, body_fun, (counter, mjx_m, mjx_d, jax.numpy.zeros((CAMERASIZE**2), dtype=float)))
 
 # simulate
-mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
+counter, mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
+print(counter)
 depth = jax.device_get(depth)
 print(depth)
 
