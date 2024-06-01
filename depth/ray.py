@@ -1,8 +1,8 @@
 import jax
 import mujoco
-from mujoco import mjx
 import typing
 import mediapy
+from mujoco import mjx
 
 #jax.config.update("jax_compilation_cache_dir", "/home/markusheimerl/sim/cache")
 
