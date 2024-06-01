@@ -23,6 +23,9 @@ xml = """
       <inertial pos="0 0 0" mass="0.027" diaginertia="2.3951e-5 2.3951e-5 3.2347e-5"/>
       <camera name="track" pos="-1 0 .5" xyaxes="0 -1 0 1 0 2" mode="trackcom"/>
 
+	  <!-- FPV Camera -->
+      <camera name="fpv" pos="0.01 0.01 0" xyaxes="1 -1 0 0 0 1" fovy="90"/>
+	  
       <!-- Crossing rods -->
       <geom name="rod1" type="capsule" fromto="-0.1 0 0 0.1 0 0" size="0.005"/>
       <geom name="rod2" type="capsule" fromto="0 -0.1 0 0 0.1 0" size="0.005"/>
@@ -43,9 +46,9 @@ xml = """
 
   <actuator>
     <motor ctrlrange="0 5.35" gear="0 0 1 0 0 0" site="actuation" name="body_thrust"/>
-    <motor ctrlrange="-1 1" gear="0 0 0 -0.00001 0 0" site="actuation" name="x_moment"/>
-    <motor ctrlrange="-1 1" gear="0 0 0 0 -0.00001 0" site="actuation" name="y_moment"/>
-    <motor ctrlrange="-1 1" gear="0 0 0 0 0 -0.00001" site="actuation" name="z_moment"/>
+    <motor ctrlrange="-5 5" gear="0 0 0 -0.00001 0 0" site="actuation" name="x_moment"/>
+    <motor ctrlrange="-5 5" gear="0 0 0 0 -0.00001 0" site="actuation" name="y_moment"/>
+    <motor ctrlrange="-5 5" gear="0 0 0 0 0 -0.00001" site="actuation" name="z_moment"/>
   </actuator>
 
   <sensor>
