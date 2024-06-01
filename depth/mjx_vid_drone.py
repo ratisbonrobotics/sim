@@ -1,10 +1,7 @@
-import jax
 import mujoco
-import typing
-import mediapy
 from mujoco import mjx
-
-#jax.config.update("jax_compilation_cache_dir", "/home/markusheimerl/sim/cache")
+import jax
+import mediapy as media
 
 xml = """
 <mujoco model="CF2 scene">
@@ -163,55 +160,34 @@ xml = """
   </worldbody>
 </mujoco>
 """
-CAMERASIZE = 128
 
 # Make model and data
 model = mujoco.MjModel.from_xml_string(xml)
 data = mujoco.MjData(model)
-mujoco.mj_resetData(model, data)
 
-# Move to accelerator
 mjx_model = mjx.put_model(model)
-mjx_data = mjx.put_data(model, data)
 
-# vmap mjx.ray
-vray = jax.vmap(mjx.ray, (None, None, 0, 0), (0, 0))
+# Make renderer, render and show the pixels
+renderer = mujoco.Renderer(model)
 
-# Define sim function
-def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
-  x, y = jax.numpy.meshgrid(jax.numpy.linspace(-0.5, 0.5, CAMERASIZE), jax.numpy.linspace(-0.5, 0.5, CAMERASIZE))
-  origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE**2)], axis=1)
-  directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.zeros((CAMERASIZE**2,)),-jax.numpy.ones((CAMERASIZE**2,))))
-  counter = 0
-  end_time = 1.0
+duration = 3.8  # (seconds)
+framerate = 60  # (Hz)
 
-  def cond_fun(carry : typing.Tuple[int, mjx.Model, mjx.Data, jax.Array]):
-      _, _, mjx_d, _ = carry
-      return mjx_d.time < end_time
+jit_step = jax.jit(mjx.step)
 
-  def body_fun(carry : typing.Tuple[int, mjx.Model, mjx.Data, jax.Array]):
-      counter, mjx_m, mjx_d, depths = carry
-      mjx_d = mjx.step(mjx_m, mjx_d) # one step steps for 2 ms
-      depths = depths.at[counter].set(vray(mjx_m, mjx_d, origins, directions)[0])
-      counter += 1
-      return counter, mjx_m, mjx_d, depths
-
-  depths = jax.numpy.zeros((int(end_time / 0.002), CAMERASIZE**2), dtype=float)
-  return jax.lax.while_loop(cond_fun, body_fun, (counter, mjx_m, mjx_d, depths))
-
-# simulate
-counter, mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
-depth = jax.device_get(depth)
-
-# save the frames as MP4
-min_depth = depth.min()
-max_depth = depth.max()
+# Simulate and display video.
 frames = []
+mujoco.mj_resetData(model, data)  # Reset state and time.
+mjx_data = mjx.put_data(model, data)
+while mjx_data.time < duration:
+    mjx_data = jit_step(mjx_model, mjx_data)
+    if len(frames) < mjx_data.time * framerate:
+        mj_data = mjx.get_data(model, mjx_data)
+        renderer.update_scene(mj_data)
+        pixels = renderer.render()
+        frames.append(pixels)
 
-for i in range(depth.shape[0]):
-    depth_image = depth[i].reshape((int(jax.numpy.sqrt(depth.shape[1])), int(jax.numpy.sqrt(depth.shape[1]))))
-    depth_image = (depth_image - min_depth) / (max_depth - min_depth) * 255
-    depth_image = depth_image.astype(jax.numpy.uint8)
-    frames.append(depth_image)
+renderer.close()
 
-mediapy.write_video("depth/vid1.mp4", frames, fps=1.0 / 0.002)
+# Save video from frames
+media.write_video('simulation_mjx.mp4', frames, fps=framerate)
