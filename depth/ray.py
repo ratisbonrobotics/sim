@@ -2,6 +2,7 @@ import jax
 import mujoco
 from mujoco import mjx
 import typing
+import mediapy
 
 #jax.config.update("jax_compilation_cache_dir", "/home/markusheimerl/sim/cache")
 
@@ -41,63 +42,35 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
   origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE**2)], axis=1)
   directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.zeros((CAMERASIZE**2,)),-jax.numpy.ones((CAMERASIZE**2,))))
   counter = 0
+  end_time = 1.0
 
   def cond_fun(carry : typing.Tuple[int, mjx.Model, mjx.Data, jax.Array]):
-      counter, _, mjx_d, _ = carry
-      return counter < 5000 # mjx_d.time < 0.01
+      _, _, mjx_d, _ = carry
+      return mjx_d.time < end_time
 
   def body_fun(carry : typing.Tuple[int, mjx.Model, mjx.Data, jax.Array]):
       counter, mjx_m, mjx_d, depths = carry
-      mjx_d = mjx.step(mjx_m, mjx_d)
-      depths = jax.lax.cond(
-          counter % 100 == 0,
-          lambda _: depths.at[counter // 100].set(vray(mjx_m, mjx_d, origins, directions)[0]),
-          lambda _: depths,
-          None
-      )
+      mjx_d = mjx.step(mjx_m, mjx_d) # one step steps for 2 ms
+      depths = depths.at[counter].set(vray(mjx_m, mjx_d, origins, directions)[0])
       counter += 1
       return counter, mjx_m, mjx_d, depths
 
-  depths = jax.numpy.zeros((50, CAMERASIZE**2), dtype=float)
+  depths = jax.numpy.zeros((int(end_time / 0.002), CAMERASIZE**2), dtype=float)
   return jax.lax.while_loop(cond_fun, body_fun, (counter, mjx_m, mjx_d, depths))
 
 # simulate
 counter, mjx_m, mjx_d, depth = jax.jit(sim)(mjx_model, mjx_data)
-print(counter)
 depth = jax.device_get(depth)
-print(depth)
 
-from PIL import Image
-import numpy as np
-
-# Convert depth to a numpy array
-depth_array = np.array(depth)
-
-# Determine the size of the square image
-size = int(np.sqrt(depth_array.shape[1]))
-
-# Find the minimum and maximum depth values across all frames
-min_depth = depth_array.min()
-max_depth = depth_array.max()
-
-# Create a list to store the frames of the GIF
+# save the frames as MP4
+min_depth = depth.min()
+max_depth = depth.max()
 frames = []
 
-for i in range(depth_array.shape[0]):
-    # Reshape the depth array into a square image
-    depth_image = depth_array[i].reshape((size, size))
-
-    # Normalize the depth values to the range [0, 255] based on the global min and max
+for i in range(depth.shape[0]):
+    depth_image = depth[i].reshape((int(jax.numpy.sqrt(depth.shape[1])), int(jax.numpy.sqrt(depth.shape[1]))))
     depth_image = (depth_image - min_depth) / (max_depth - min_depth) * 255
+    depth_image = depth_image.astype(jax.numpy.uint8)
+    frames.append(depth_image)
 
-    # Convert the depth image to uint8 data type
-    depth_image = depth_image.astype(np.uint8)
-
-    # Create a PIL Image from the depth array
-    image = Image.fromarray(depth_image)
-
-    # Append the image to the frames list
-    frames.append(image)
-
-# Save the frames as a GIF
-frames[0].save("depth_animation.gif", save_all=True, append_images=frames[1:], duration=100, loop=0)
+mediapy.write_video("depth/vid1.mp4", frames, fps=1.0 / 0.002)
