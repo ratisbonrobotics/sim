@@ -79,9 +79,13 @@ xml = """
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+	  <!-- Red cube -->
+    <geom name="red_cube" type="box" size="0.1 0.1 0.1" pos="1 1 0" rgba="1 0 0 1"/>
+    <geom name="green_cube" type="box" size="0.1 0.1 0.1" pos="0.5 3 0" rgba="0 1 0 1"/>
   </worldbody>
 </mujoco>
 """
+
 CAMERASIZE = 128
 
 # Make model and data
@@ -99,8 +103,8 @@ vray = jax.vmap(mjx.ray, (None, None, 0, 0), (0, 0))
 # Define sim function
 def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
   x, y = jax.numpy.meshgrid(jax.numpy.linspace(-0.5, 0.5, CAMERASIZE), jax.numpy.linspace(-0.5, 0.5, CAMERASIZE))
-  origins = jax.numpy.stack([x.ravel(), y.ravel(), jax.numpy.ones(CAMERASIZE**2)], axis=1)
-  directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.zeros((CAMERASIZE**2,)),-jax.numpy.ones((CAMERASIZE**2,))))
+  origins = jax.numpy.stack([x.ravel(), jax.numpy.ones(CAMERASIZE**2) * 0.5, y.ravel()], axis=1)
+  directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.ones((CAMERASIZE**2,)), jax.numpy.zeros((CAMERASIZE**2,))))
   counter = 0
   end_time = 1.0
 
