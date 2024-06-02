@@ -81,7 +81,7 @@ xml = """
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
 	  <!-- Red cube -->
     <geom name="red_cube" type="box" size="0.1 0.1 0.1" pos="1 1 0" rgba="1 0 0 1"/>
-    <geom name="green_cube" type="box" size="0.1 0.1 0.1" pos="0.5 3 0" rgba="0 1 0 1"/>
+    <geom name="green_sphere" type="sphere" size="0.1 0.1 0.1" pos="0.2 3 0" rgba="0 1 0 1"/>
   </worldbody>
 </mujoco>
 """
