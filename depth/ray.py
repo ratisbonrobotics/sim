@@ -5,6 +5,21 @@ import mediapy
 from mujoco import mjx
 
 #jax.config.update("jax_compilation_cache_dir", "/home/markusheimerl/sim/cache")
+import jax.numpy as jnp
+
+def rotate_z(points, angle):
+    theta = jnp.deg2rad(angle)
+    cos_theta = jnp.cos(theta)
+    sin_theta = jnp.sin(theta)
+    
+    rotation_matrix = jnp.array([
+        [cos_theta, -sin_theta, 0],
+        [sin_theta, cos_theta, 0],
+        [0, 0, 1]
+    ])
+    
+    return jnp.dot(points, rotation_matrix.T)
+
 
 xml = """
 <mujoco model="Simple Drone">
@@ -81,7 +96,7 @@ xml = """
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
 	  <!-- Red cube -->
     <geom name="red_cube" type="box" size="0.1 0.1 0.1" pos="1 1 0" rgba="1 0 0 1"/>
-    <geom name="green_sphere" type="sphere" size="0.1 0.1 0.1" pos="0.2 3 0" rgba="0 1 0 1"/>
+    <geom name="green_sphere" type="sphere" size="0.1 0.1 0.1" pos="0 3 0" rgba="0 1 0 1"/>
   </worldbody>
 </mujoco>
 """
@@ -105,8 +120,10 @@ def sim(mjx_m: mjx.Model, mjx_d: mjx.Data):
   x, y = jax.numpy.meshgrid(jax.numpy.linspace(-0.5, 0.5, CAMERASIZE), jax.numpy.linspace(-0.5, 0.5, CAMERASIZE))
   origins = jax.numpy.stack([x.ravel(), jax.numpy.ones(CAMERASIZE**2) * 0.5, y.ravel()], axis=1)
   directions = jax.numpy.column_stack((jax.numpy.zeros((CAMERASIZE**2,)),jax.numpy.ones((CAMERASIZE**2,)), jax.numpy.zeros((CAMERASIZE**2,))))
+  origins = rotate_z(origins, -45)
+  directions = rotate_z(directions, -45)
   counter = 0
-  end_time = 1.0
+  end_time = 0.1
 
   def cond_fun(carry : typing.Tuple[int, mjx.Model, mjx.Data, jax.Array]):
       _, _, mjx_d, _ = carry
