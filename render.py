@@ -136,11 +136,11 @@ def render_model(vertices, texture_coords, faces, width, height, texture, mvp_ma
 
 def main():
     # Load African head model
-    vertices1, texture_coords1, faces1 = parse_obj_file('african_head.obj')
+    vertices1, texture_coords1, faces1 = parse_obj_file('drone.obj')
     texture1 = jnp.array(Image.open('african_head_diffuse.tga'))
 
     # Load African head model
-    vertices2, texture_coords2, faces2 = parse_obj_file('african_head.obj')
+    vertices2, texture_coords2, faces2 = parse_obj_file('drone.obj')
     texture2 = jnp.array(Image.open('african_head_diffuse.tga'))
     
     width, height = 800, 600
@@ -153,8 +153,8 @@ def main():
     projection_matrix = create_projection_matrix(fov, aspect_ratio, near, far)
     
     # Create two different model matrices
-    model_matrix1 = create_model_matrix(scale=[1, 1, 1], rotation=[0, 1, 0], translation=[0, 0, -3])
-    model_matrix2 = create_model_matrix(scale=[1, 1, 1], rotation=[0, 2, 0], translation=[0, 0, -3])
+    model_matrix1 = create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 1, 0], translation=[0, -0.3, -3])
+    model_matrix2 = create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 2, 0], translation=[0, -0.3, -3])
     
     mvp_matrix1 = projection_matrix @ view_matrix @ model_matrix1
     mvp_matrix2 = projection_matrix @ view_matrix @ model_matrix2
