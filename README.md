@@ -8,4 +8,5 @@ Milestones:
 4. implement collision
 5. parametrize drone quadrotor inputs
 6. implement simple loss function, like average pixel color (gradient ascent will try to keep drone inside image frame to contribute to higher average pixel value because background is black and black is 0)
-7. optimizie parameters every 1000 physic steps and restart simulation
+7. accumulate gradients every physics step
+8. optimizie parameters every 1000 physic steps and restart simulation
