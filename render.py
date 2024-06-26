@@ -110,40 +110,38 @@ def rasterize_triangle(vertices, texture_coords, face):
     return mask, depth, tx, ty
 
 @jit
-def render_model(vertices, texture_coords, faces, texture, mvp_matrix):
+def render_scene(vertices_list, texture_coords_list, faces_list, textures, mvp_matrices):
     depth_buffer = jnp.full((HEIGHT, WIDTH), jnp.inf)
     color_buffer = jnp.zeros((HEIGHT, WIDTH, 3), dtype=jnp.uint8)
 
-    # Apply MVP matrix to vertices
-    vertices_homogeneous = jnp.pad(vertices, ((0, 0), (0, 1)), constant_values=1)
-    vertices_transformed = jnp.dot(vertices_homogeneous, mvp_matrix.T)
+    def render_model(depth_buffer, color_buffer, vertices, texture_coords, faces, texture, mvp_matrix):
+        # Apply MVP matrix to vertices
+        vertices_homogeneous = jnp.pad(vertices, ((0, 0), (0, 1)), constant_values=1)
+        vertices_transformed = jnp.dot(vertices_homogeneous, mvp_matrix.T)
 
-    def render_face(buffers, face):
-        depth_buffer, color_buffer = buffers
-        mask, depth, tx, ty = rasterize_triangle(vertices_transformed, texture_coords, face)
-        
-        update = mask & (depth < depth_buffer)
-        depth_buffer = jnp.where(update, depth, depth_buffer)
-        
-        tx_clipped = jnp.clip(tx * texture.shape[1], 0, texture.shape[1] - 1).astype(jnp.int32)
-        ty_clipped = jnp.clip(ty * texture.shape[0], 0, texture.shape[0] - 1).astype(jnp.int32)
-        color = texture[ty_clipped, tx_clipped]
-        
-        color_buffer = jnp.where(update[:, :, jnp.newaxis], color, color_buffer)
-        
-        return (depth_buffer, color_buffer), None
+        def render_face(buffers, face):
+            depth_buffer, color_buffer = buffers
+            mask, depth, tx, ty = rasterize_triangle(vertices_transformed, texture_coords, face)
+            
+            update = mask & (depth < depth_buffer)
+            depth_buffer = jnp.where(update, depth, depth_buffer)
+            
+            tx_clipped = jnp.clip(tx * texture.shape[1], 0, texture.shape[1] - 1).astype(jnp.int32)
+            ty_clipped = jnp.clip(ty * texture.shape[0], 0, texture.shape[0] - 1).astype(jnp.int32)
+            color = texture[ty_clipped, tx_clipped]
+            
+            color_buffer = jnp.where(update[:, :, jnp.newaxis], color, color_buffer)
+            
+            return (depth_buffer, color_buffer), None
 
-    (final_depth_buffer, final_color_buffer), _ = jax.lax.scan(render_face, (depth_buffer, color_buffer), faces)
-    
-    return final_depth_buffer, final_color_buffer
+        (depth_buffer, color_buffer), _ = jax.lax.scan(render_face, (depth_buffer, color_buffer), faces)
+        
+        return depth_buffer, color_buffer
 
-@jit
-def render_scene(vertices1, texture_coords1, faces1, texture1, 
-                 vertices2, texture_coords2, faces2, texture2, 
-                 mvp1, mvp2):
-    depth1, color1 = render_model(vertices1, texture_coords1, faces1, texture1, mvp1)
-    depth2, color2 = render_model(vertices2, texture_coords2, faces2, texture2, mvp2)
-    return jnp.where(depth2[:, :, jnp.newaxis] < depth1[:, :, jnp.newaxis], color2, color1)
+    for vertices, texture_coords, faces, texture, mvp_matrix in zip(vertices_list, texture_coords_list, faces_list, textures, mvp_matrices):
+        depth_buffer, color_buffer = render_model(depth_buffer, color_buffer, vertices, texture_coords, faces, texture, mvp_matrix)
+
+    return color_buffer
 
 def main():
     # Load models
@@ -172,13 +170,16 @@ def main():
     mvp_matrices = jnp.einsum('ij,nkjl->nkil', projection_matrix @ view_matrix, model_matrices)
     
     # Vmap the render_scene function
-    batched_render_scene = jit(vmap(partial(render_scene, 
-                                            vertices1, texture_coords1, faces1, texture1,
-                                            vertices2, texture_coords2, faces2, texture2), 
-                                    in_axes=(0, 0)))
+    batched_render_scene = jit(vmap(render_scene, in_axes=(None, None, None, None, 0)))
     
     # Render all scenes at once
-    images = batched_render_scene(mvp_matrices[:, 0], mvp_matrices[:, 1])
+    images = batched_render_scene(
+        [vertices1, vertices2],
+        [texture_coords1, texture_coords2],
+        [faces1, faces2],
+        [texture1, texture2],
+        mvp_matrices
+    )
     
     # Save the images
     for i, image in enumerate(images):
