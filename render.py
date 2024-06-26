@@ -135,13 +135,12 @@ def render_model(vertices, texture_coords, faces, width, height, texture, mvp_ma
     return final_color_buffer
 
 def main():
-    # Load African head model
+    # Load models
     vertices1, texture_coords1, faces1 = parse_obj_file('drone.obj')
     texture1 = jnp.array(Image.open('drone.png').convert('RGB'))
 
-    # Load African head model
-    vertices2, texture_coords2, faces2 = parse_obj_file('drone.obj')
-    texture2 = jnp.array(Image.open('drone.png').convert('RGB'))
+    vertices2, texture_coords2, faces2 = parse_obj_file('african_head.obj')
+    texture2 = jnp.array(Image.open('african_head_diffuse.tga').convert('RGB'))
     
     width, height = 800, 600
     aspect_ratio = width / height
@@ -152,30 +151,32 @@ def main():
     view_matrix = create_view_matrix(eye=jnp.array([0, 0, 3]), center=jnp.array([0, 0, 0]), up=jnp.array([0, 1, 0]))
     projection_matrix = create_projection_matrix(fov, aspect_ratio, near, far)
     
-    # Create two different model matrices
-    model_matrix1 = create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 1, 0], translation=[0, -0.3, -3])
-    model_matrix2 = create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 2, 0], translation=[0, -0.3, -3])
+    # Create model matrices for each object and each output image
+    model_matrices = jnp.array([
+        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 1, 0], translation=[-0.5, 0, -3]),  # Drone in output 1
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 2, 0], translation=[0.5, 0, -2])],  # African head in output 1
+        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 3, 0], translation=[-0.5, 0, -3]),  # Drone in output 2
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 4, 0], translation=[0.5, 0, -2])]   # African head in output 2
+    ])
     
-    mvp_matrix1 = projection_matrix @ view_matrix @ model_matrix1
-    mvp_matrix2 = projection_matrix @ view_matrix @ model_matrix2
+    mvp_matrices = jnp.einsum('ij,nkjl->nkil', projection_matrix @ view_matrix, model_matrices)
     
-    # Vmap the render_model function
-    batched_render_model = vmap(render_model, in_axes=(0, 0, 0, None, None, 0, 0))
+    def render_single_model(vertices, texture_coords, faces, texture, mvp_matrix):
+        return render_model(vertices, texture_coords, faces, width, height, texture, mvp_matrix)
     
-    # Render both models in parallel
-    images = batched_render_model(
-        jnp.stack([vertices1, vertices2]),
-        jnp.stack([texture_coords1, texture_coords2]),
-        jnp.stack([faces1, faces2]),
-        width,
-        height,
-        jnp.stack([texture1, texture2]),
-        jnp.stack([mvp_matrix1, mvp_matrix2])
-    )
+    # Render each model separately for both outputs
+    images = []
+    for i in range(2):  # For each output image
+        drone_image = render_single_model(vertices1, texture_coords1, faces1, texture1, mvp_matrices[i, 0])
+        head_image = render_single_model(vertices2, texture_coords2, faces2, texture2, mvp_matrices[i, 1])
+        
+        # Combine the two rendered objects
+        combined_image = jnp.maximum(drone_image, head_image)
+        images.append(combined_image)
     
-    # Save both images
-    Image.fromarray(np.array(images[0])).save('output_1.png')
-    Image.fromarray(np.array(images[1])).save('output_2.png')
+    # Save the combined images
+    for i, image in enumerate(images):
+        Image.fromarray(np.array(image)).save(f'output_{i+1}.png')
 
 if __name__ == '__main__':
     main()
