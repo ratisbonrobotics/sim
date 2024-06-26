@@ -130,9 +130,9 @@ def render_model(vertices, texture_coords, faces, width, height, texture, mvp_ma
         
         return (depth_buffer, color_buffer), None
 
-    (_, final_color_buffer), _ = jax.lax.scan(render_face, (depth_buffer, color_buffer), faces)
+    (final_depth_buffer, final_color_buffer), _ = jax.lax.scan(render_face, (depth_buffer, color_buffer), faces)
     
-    return final_color_buffer
+    return final_depth_buffer, final_color_buffer
 
 def main():
     # Load models
@@ -154,25 +154,24 @@ def main():
     # Create model matrices for each object and each output image
     model_matrices = jnp.array([
         [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 1, 0], translation=[-0.5, 0, -3]),  # Drone in output 1
-         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 2, 0], translation=[0.5, 0, -2])],  # African head in output 1
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 2, 0], translation=[0.5, 0, -4])],  # African head in output 1
         [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 3, 0], translation=[-0.5, 0, -3]),  # Drone in output 2
-         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 4, 0], translation=[0.5, 0, -2])]   # African head in output 2
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 4, 0], translation=[0.5, 0, -4])]   # African head in output 2
     ])
     
     mvp_matrices = jnp.einsum('ij,nkjl->nkil', projection_matrix @ view_matrix, model_matrices)
     
-    def render_single_model(vertices, texture_coords, faces, texture, mvp_matrix):
-        return render_model(vertices, texture_coords, faces, width, height, texture, mvp_matrix)
+    @jit
+    def render_scene(mvp1, mvp2):
+        depth1, color1 = render_model(vertices1, texture_coords1, faces1, width, height, texture1, mvp1)
+        depth2, color2 = render_model(vertices2, texture_coords2, faces2, width, height, texture2, mvp2)
+        return jnp.where(depth2[:, :, jnp.newaxis] < depth1[:, :, jnp.newaxis], color2, color1)
     
-    # Render each model separately for both outputs
-    images = []
-    for i in range(2):  # For each output image
-        drone_image = render_single_model(vertices1, texture_coords1, faces1, texture1, mvp_matrices[i, 0])
-        head_image = render_single_model(vertices2, texture_coords2, faces2, texture2, mvp_matrices[i, 1])
-        
-        # Combine the two rendered objects
-        combined_image = jnp.maximum(drone_image, head_image)
-        images.append(combined_image)
+    # Vmap the render_scene function
+    batched_render_scene = jit(vmap(render_scene, in_axes=(0, 0)))
+    
+    # Render all scenes at once
+    images = batched_render_scene(mvp_matrices[:, 0], mvp_matrices[:, 1])
     
     # Save the combined images
     for i, image in enumerate(images):
