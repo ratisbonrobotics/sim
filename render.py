@@ -137,11 +137,11 @@ def render_model(vertices, texture_coords, faces, width, height, texture, mvp_ma
 def main():
     # Load African head model
     vertices1, texture_coords1, faces1 = parse_obj_file('drone.obj')
-    texture1 = jnp.array(Image.open('african_head_diffuse.tga'))
+    texture1 = jnp.array(Image.open('drone.png').convert('RGB'))
 
     # Load African head model
     vertices2, texture_coords2, faces2 = parse_obj_file('drone.obj')
-    texture2 = jnp.array(Image.open('african_head_diffuse.tga'))
+    texture2 = jnp.array(Image.open('drone.png').convert('RGB'))
     
     width, height = 800, 600
     aspect_ratio = width / height
