@@ -1,7 +1,6 @@
 import jax
 import jax.numpy as jnp
 from jax import jit, vmap
-from functools import partial
 from PIL import Image
 import numpy as np
 
@@ -114,11 +113,13 @@ def render_scene(vertices_list, texture_coords_list, faces_list, textures, mvp_m
     depth_buffer = jnp.full((HEIGHT, WIDTH), jnp.inf)
     color_buffer = jnp.zeros((HEIGHT, WIDTH, 3), dtype=jnp.uint8)
 
+    @jit
     def render_model(depth_buffer, color_buffer, vertices, texture_coords, faces, texture, mvp_matrix):
         # Apply MVP matrix to vertices
         vertices_homogeneous = jnp.pad(vertices, ((0, 0), (0, 1)), constant_values=1)
         vertices_transformed = jnp.dot(vertices_homogeneous, mvp_matrix.T)
 
+        @jit
         def render_face(buffers, face):
             depth_buffer, color_buffer = buffers
             mask, depth, tx, ty = rasterize_triangle(vertices_transformed, texture_coords, face)
