@@ -3,9 +3,10 @@ import jax.numpy as jnp
 from jax import jit, vmap
 from PIL import Image
 import numpy as np
+from moviepy.editor import ImageSequenceClip
 
 # Constants
-WIDTH, HEIGHT = 800, 600
+WIDTH, HEIGHT = 640, 480
 
 def parse_obj_file(file_path):
     vertices, texture_coords, faces = [], [], []
@@ -144,6 +145,38 @@ def render_scene(vertices_list, texture_coords_list, faces_list, textures, mvp_m
 
     return color_buffer
 
+@jit
+def create_model_matrices(frame, num_frames):
+    t = frame / num_frames * 2 * jnp.pi  # Time parameter
+    return jnp.array([
+        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, t, 0], translation=[-0.5, 0, -3]),
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 2*t, 0], translation=[0.5, 0, -4])],
+        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 3*t, 0], translation=[-0.5, 0, -3]),
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 4*t, 0], translation=[0.5, 0, -4])]
+    ])
+
+# Define batched_render_scene at the global scope
+batched_render_scene = jit(vmap(render_scene, in_axes=(None, None, None, None, 0)))
+
+@jit
+def render_frame(carry, frame):
+    projection_matrix, view_matrix, vertices_list, texture_coords_list, faces_list, textures, num_frames = carry
+    
+    model_matrices = create_model_matrices(frame, num_frames)
+    mvp_matrices = jnp.einsum('ij,nkjl->nkil', projection_matrix @ view_matrix, model_matrices)
+    
+    images = batched_render_scene(
+        vertices_list,
+        texture_coords_list,
+        faces_list,
+        textures,
+        mvp_matrices
+    )
+    
+    return carry, images
+
+import time
+
 def main():
     # Load models
     vertices1, texture_coords1, faces1 = parse_obj_file('drone.obj')
@@ -160,31 +193,46 @@ def main():
     view_matrix = create_view_matrix(eye=jnp.array([0, 0, 3]), center=jnp.array([0, 0, 0]), up=jnp.array([0, 1, 0]))
     projection_matrix = create_projection_matrix(fov, aspect_ratio, near, far)
     
-    # Create model matrices for each object and each output image
-    model_matrices = jnp.array([
-        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 1, 0], translation=[-0.5, 0, -3]),  # Drone in output 1
-         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 2, 0], translation=[0.5, 0, -4])],  # African head in output 1
-        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 3, 0], translation=[-0.5, 0, -3]),  # Drone in output 2
-         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 4, 0], translation=[0.5, 0, -4])]   # African head in output 2
-    ])
+    # Animation parameters
+    num_frames = 120
+    fps = 30
     
-    mvp_matrices = jnp.einsum('ij,nkjl->nkil', projection_matrix @ view_matrix, model_matrices)
+    # Prepare inputs for jax.lax.scan
+    carry = (projection_matrix, view_matrix, 
+             [vertices1, vertices2],
+             [texture_coords1, texture_coords2],
+             [faces1, faces2],
+             [texture1, texture2],
+             num_frames)
     
-    # Vmap the render_scene function
-    batched_render_scene = jit(vmap(render_scene, in_axes=(None, None, None, None, 0)))
+    # Compile the function
+    compiled_render = jit(lambda carry, x: jax.lax.scan(render_frame, carry, x))
     
-    # Render all scenes at once
-    images = batched_render_scene(
-        [vertices1, vertices2],
-        [texture_coords1, texture_coords2],
-        [faces1, faces2],
-        [texture1, texture2],
-        mvp_matrices
-    )
+    # Warm-up run
+    _ = compiled_render(carry, jnp.arange(1))
     
-    # Save the images
-    for i, image in enumerate(images):
-        Image.fromarray(np.array(image)).save(f'output_{i+1}.png')
+    # Benchmark
+    start_time = time.time()
+    _, all_images = compiled_render(carry, jnp.arange(num_frames))
+    end_time = time.time()
+    
+    total_time = end_time - start_time
+    avg_time_per_frame = total_time / num_frames
+    
+    print(f"Total rendering time: {total_time:.2f} seconds")
+    print(f"Average time per frame: {avg_time_per_frame:.4f} seconds")
+    print(f"Frames per second: {1/avg_time_per_frame:.2f}")
+    
+    # Convert to numpy arrays
+    frames1 = np.array(all_images[:, 0])
+    frames2 = np.array(all_images[:, 1])
+    
+    # Create and save the animations
+    clip1 = ImageSequenceClip(list(frames1), fps=fps)
+    clip2 = ImageSequenceClip(list(frames2), fps=fps)
+    
+    clip1.write_videofile("output_1.mp4")
+    clip2.write_videofile("output_2.mp4")
 
 if __name__ == '__main__':
     main()
