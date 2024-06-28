@@ -4,58 +4,23 @@ from jax import jit, vmap
 from PIL import Image
 import numpy as np
 from moviepy.editor import ImageSequenceClip
-import os
 
 # Constants
 WIDTH, HEIGHT = 640, 480
 
 def parse_obj_file(file_path):
-    drawables = []
-    current_drawable = {'name': None, 'vertices': [], 'texture_coords': [], 'faces': []}
-    mtl_file = None
-    vertex_offset = 0
-    texture_coord_offset = 0
-
+    vertices, texture_coords, faces = [], [], []
     with open(file_path, 'r') as file:
         for line in file:
-            if line.startswith('o '):
-                if current_drawable['name'] is not None:
-                    drawables.append(current_drawable)
-                current_drawable = {'name': line.split()[1], 'vertices': [], 'texture_coords': [], 'faces': []}
-                vertex_offset = len(drawables) * len(current_drawable['vertices'])
-                texture_coord_offset = len(drawables) * len(current_drawable['texture_coords'])
-            elif line.startswith('v '): 
-                current_drawable['vertices'].append([float(coord) for coord in line.split()[1:]])
-            elif line.startswith('vt '): 
-                current_drawable['texture_coords'].append([float(coord) for coord in line.split()[1:]])
+            if line.startswith('v '): vertices.append([float(coord) for coord in line.split()[1:]])
+            elif line.startswith('vt '): texture_coords.append([float(coord) for coord in line.split()[1:]])
             elif line.startswith('f '):
                 face = []
                 for vertex_index in line.split()[1:]:
                     indices = vertex_index.split('/')
-                    face.append((int(indices[0]) - 1 - vertex_offset, 
-                                 int(indices[1]) - 1 - texture_coord_offset if len(indices) > 1 else None))
-                current_drawable['faces'].append(face)
-            elif line.startswith('mtllib'):
-                mtl_file = line.split()[1]
-
-    if current_drawable['name'] is not None:
-        drawables.append(current_drawable)
-
-    return drawables, mtl_file
-
-def parse_mtl_file(file_path):
-    materials = {}
-    current_material = None
-
-    with open(file_path, 'r') as file:
-        for line in file:
-            if line.startswith('newmtl'):
-                current_material = line.split()[1]
-                materials[current_material] = {}
-            elif line.startswith('map_Kd') and current_material:
-                materials[current_material]['texture'] = line.split()[1]
-
-    return materials
+                    face.append((int(indices[0]) - 1, int(indices[1]) - 1 if len(indices) > 1 else None))
+                faces.append(face)
+    return jnp.array(vertices), jnp.array(texture_coords), jnp.array(faces)
 
 def create_projection_matrix(fov, aspect_ratio, near, far):
     f = 1 / jnp.tan(fov / 2)
@@ -185,9 +150,9 @@ def create_model_matrices(frame, num_frames):
     t = frame / num_frames * 2 * jnp.pi  # Time parameter
     return jnp.array([
         [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, t, 0], translation=[-0.5, 0, -3]),
-         create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 1.5*t, 0], translation=[0.5, 0, -3])],
-        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 2*t, 0], translation=[-0.5, 0, -3]),
-         create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 2.5*t, 0], translation=[0.5, 0, -3])]
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 2*t, 0], translation=[0.5, 0, -4])],
+        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 3*t, 0], translation=[-0.5, 0, -3]),
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 4*t, 0], translation=[0.5, 0, -4])]
     ])
 
 # Define batched_render_scene at the global scope
@@ -213,43 +178,13 @@ def render_frame(carry, frame):
 import time
 
 def main():
-    # Load model
-    obj_file = 'drone.obj'
-    drawables, mtl_file = parse_obj_file(obj_file)
+    # Load models
+    vertices1, texture_coords1, faces1 = parse_obj_file('drone.obj')
+    texture1 = jnp.array(Image.open('drone.png').convert('RGB'))
+
+    vertices2, texture_coords2, faces2 = parse_obj_file('scene.obj')
+    texture2 = jnp.array(Image.open('scene.png').convert('RGB'))
     
-    # Parse MTL file
-    if mtl_file:
-        mtl_path = os.path.join(os.path.dirname(obj_file), mtl_file)
-        materials = parse_mtl_file(mtl_path)
-    else:
-        materials = {}
-
-    vertices_list = []
-    texture_coords_list = []
-    faces_list = []
-    textures = []
-
-    for drawable in drawables:
-        vertices_list.append(jnp.array(drawable['vertices']))
-        texture_coords_list.append(jnp.array(drawable['texture_coords']))
-        faces_list.append(jnp.array(drawable['faces']))
-        
-        # Use the first material's texture for simplicity
-        # In a more complex scenario, you might want to handle multiple materials per object
-        if materials:
-            texture_file = next(iter(materials.values())).get('texture')
-            if texture_file:
-                texture_path = os.path.join(os.path.dirname(obj_file), texture_file)
-                texture = jnp.array(Image.open(texture_path).convert('RGB'))
-            else:
-                print(f"Texture file not found for {drawable['name']}. Using default texture.")
-                texture = jnp.ones((256, 256, 3), dtype=jnp.uint8) * 128
-        else:
-            print(f"No materials found for {drawable['name']}. Using default texture.")
-            texture = jnp.ones((256, 256, 3), dtype=jnp.uint8) * 128
-        
-        textures.append(texture)
-
     aspect_ratio = WIDTH / HEIGHT
     fov = jnp.radians(45)
     near = 0.1
@@ -264,10 +199,10 @@ def main():
     
     # Prepare inputs for jax.lax.scan
     carry = (projection_matrix, view_matrix, 
-             vertices_list * 2,
-             texture_coords_list * 2,
-             faces_list * 2,
-             textures * 2,
+             [vertices1, vertices2],
+             [texture_coords1, texture_coords2],
+             [faces1, faces2],
+             [texture1, texture2],
              num_frames)
     
     # Compile the function
