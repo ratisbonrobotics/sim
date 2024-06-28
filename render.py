@@ -4,6 +4,7 @@ from jax import jit, vmap
 from PIL import Image
 import numpy as np
 from moviepy.editor import ImageSequenceClip
+import time
 
 # Constants
 WIDTH, HEIGHT = 640, 480
@@ -152,7 +153,9 @@ def create_model_matrices(frame, num_frames):
         [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, t, 0], translation=[-0.5, 0, -3]),
          create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 2*t, 0], translation=[0.5, 0, -4])],
         [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 3*t, 0], translation=[-0.5, 0, -3]),
-         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 4*t, 0], translation=[0.5, 0, -4])]
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 4*t, 0], translation=[0.5, 0, -4])],
+        [create_model_matrix(scale=[0.1, 0.1, 0.1], rotation=[0, 5*t, 0], translation=[-0.5, 0, -3]),
+         create_model_matrix(scale=[1.0, 1.0, 1.0], rotation=[0, 6*t, 0], translation=[0.5, 0, -4])]
     ])
 
 # Define batched_render_scene at the global scope
@@ -174,8 +177,6 @@ def render_frame(carry, frame):
     )
     
     return carry, images
-
-import time
 
 def main():
     # Load models
@@ -226,13 +227,16 @@ def main():
     # Convert to numpy arrays
     frames1 = np.array(all_images[:, 0])
     frames2 = np.array(all_images[:, 1])
+    frames3 = np.array(all_images[:, 2])
     
     # Create and save the animations
     clip1 = ImageSequenceClip(list(frames1), fps=fps)
     clip2 = ImageSequenceClip(list(frames2), fps=fps)
+    clip3 = ImageSequenceClip(list(frames3), fps=fps)
     
     clip1.write_videofile("output_1.mp4")
     clip2.write_videofile("output_2.mp4")
+    clip3.write_videofile("output_3.mp4")
 
 if __name__ == '__main__':
     main()
