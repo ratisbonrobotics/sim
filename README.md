@@ -3,7 +3,8 @@ A simulator
 
 Milestones:
 1. render multiple objects in single scene (with different verticies, model matricies and textures) - done
-2. render "movie"
+2. render "movie" - done
+2.5 render room scene
 3. implement drone dynamics
 4. implement collision (drone cannot push anything, everything is an immovable object, drone is just prevented to fly through anything)
 5. parametrize drone quadrotor inputs
