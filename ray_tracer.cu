@@ -42,6 +42,31 @@ struct Ray {
     Vec3f direction;
 };
 
+struct Mat4f {
+    float m[4][4];
+
+    __host__ __device__ Mat4f() {
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++)
+                m[i][j] = (i == j) ? 1.0f : 0.0f;
+    }
+
+    __host__ __device__ Vec3f transform(const Vec3f& v) const {
+        float x = m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z + m[0][3];
+        float y = m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z + m[1][3];
+        float z = m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z + m[2][3];
+        float w = m[3][0] * v.x + m[3][1] * v.y + m[3][2] * v.z + m[3][3];
+        return Vec3f(x/w, y/w, z/w);
+    }
+
+    __host__ __device__ Vec3f transformNormal(const Vec3f& n) const {
+        float x = m[0][0] * n.x + m[0][1] * n.y + m[0][2] * n.z;
+        float y = m[1][0] * n.x + m[1][1] * n.y + m[1][2] * n.z;
+        float z = m[2][0] * n.x + m[2][1] * n.y + m[2][2] * n.z;
+        return Vec3f(x, y, z).normalize();
+    }
+};
+
 __device__ bool ray_triangle_intersect(const Ray& ray, const Triangle& triangle, float& t, float& u, float& v) {
     Vec3f edge1 = triangle.v[1] - triangle.v[0];
     Vec3f edge2 = triangle.v[2] - triangle.v[0];
@@ -66,7 +91,7 @@ __device__ bool ray_triangle_intersect(const Ray& ray, const Triangle& triangle,
     return t > 1e-5;
 }
 
-__global__ void ray_trace_kernel(Triangle* triangles, int num_triangles, unsigned char* texture, int tex_width, int tex_height, unsigned char* output, int width, int height) {
+__global__ void ray_trace_kernel(Triangle* triangles, int num_triangles, unsigned char* texture, int tex_width, int tex_height, unsigned char* output, int width, int height, Mat4f model_matrix) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -87,8 +112,14 @@ __global__ void ray_trace_kernel(Triangle* triangles, int num_triangles, unsigne
     float closest_t = FLT_MAX;
 
     for (int i = 0; i < num_triangles; i++) {
+        Triangle transformed_triangle = triangles[i];
+        for (int j = 0; j < 3; j++) {
+            transformed_triangle.v[j] = model_matrix.transform(triangles[i].v[j]);
+            transformed_triangle.n[j] = model_matrix.transformNormal(triangles[i].n[j]);
+        }
+
         float t, u, v;
-        if (ray_triangle_intersect(ray, triangles[i], t, u, v) && t < closest_t) {
+        if (ray_triangle_intersect(ray, transformed_triangle, t, u, v) && t < closest_t) {
             closest_t = t;
 
             // Barycentric coordinates
@@ -108,7 +139,7 @@ __global__ void ray_trace_kernel(Triangle* triangles, int num_triangles, unsigne
                 tex_color.z = texture[(tex_y * tex_width + tex_x) * 3 + 2] / 255.0f;
 
                 // Interpolate vertex normals
-                Vec3f normal = (triangles[i].n[0] * w + triangles[i].n[1] * u + triangles[i].n[2] * v).normalize();
+                Vec3f normal = (transformed_triangle.n[0] * w + transformed_triangle.n[1] * u + transformed_triangle.n[2] * v).normalize();
 
                 Vec3f light_dir = Vec3f(1, 1, 1).normalize();  // Light direction from top-right-front
                 float diffuse = max(0.0f, normal.dot(light_dir));
@@ -199,7 +230,23 @@ int main() {
     dim3 block_size(16, 16);
     dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
 
-    ray_trace_kernel<<<grid_size, block_size>>>(d_triangles, triangles.size(), d_texture, tex_width, tex_height, d_output, width, height);
+    // Create model matrix for translation and rotation
+    Mat4f model_matrix;
+    // Translate the model
+    model_matrix.m[0][3] = 0.0f;  // Move 0.5 units along x-axis
+    model_matrix.m[1][3] = 0.0f; // Move -0.2 units along y-axis
+    model_matrix.m[2][3] = -3.0f;  // No movement along z-axis
+
+    // Rotate the model (example: rotate 45 degrees around y-axis)
+    float angle = 3.14159f / 4.0f; // 45 degrees in radians
+    float cos_angle = cos(angle);
+    float sin_angle = sin(angle);
+    model_matrix.m[0][0] = cos_angle;
+    model_matrix.m[0][2] = sin_angle;
+    model_matrix.m[2][0] = -sin_angle;
+    model_matrix.m[2][2] = cos_angle;
+
+    ray_trace_kernel<<<grid_size, block_size>>>(d_triangles, triangles.size(), d_texture, tex_width, tex_height, d_output, width, height, model_matrix);
 
     unsigned char* output = new unsigned char[width * height * 3];
     CHECK_CUDA(cudaMemcpy(output, d_output, width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
