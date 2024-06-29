@@ -167,3 +167,4 @@ cache/
 output*.png
 *.out
 .vscode/
+*.tga
