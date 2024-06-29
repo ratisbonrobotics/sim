@@ -13,6 +13,8 @@
 #include "stb_image_write.h"
 #include <cfloat>
 #include <cmath>
+#include <chrono>
+#include <iostream>
 
 #define CHECK_CUDA(call) { cudaError_t err = call; if (err != cudaSuccess) { printf("CUDA error: %s, line %d\n", cudaGetErrorString(err), __LINE__); exit(1); } }
 
@@ -236,25 +238,14 @@ Mat4f generate_random_model_matrix() {
     matrix.m[2][0] = -sin_angle;
     matrix.m[2][2] = cos_angle;
 
-    /* // Random scale
-    float scale = scale_dis(gen);
-    matrix.m[0][0] *= scale;
-    matrix.m[1][1] *= scale;
-    matrix.m[2][2] *= scale;*/
-
     return matrix;
 }
-
-#include <chrono>
-#include <iostream>
-#include <vector>
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
 
 int main() {
     const int width = 800;
     const int height = 600;
     const std::vector<int> scenes_to_test = {1, 2, 4, 8, 16, 32, 64};
+    int max_num_scenes = *std::max_element(scenes_to_test.begin(), scenes_to_test.end());
     std::vector<std::pair<int, double>> timing_results;
 
     // Load textures and objects only once
@@ -270,58 +261,58 @@ int main() {
     int drone_tex_width, drone_tex_height, drone_tex_channels;
     unsigned char* drone_texture = stbi_load("drone.png", &drone_tex_width, &drone_tex_height, &drone_tex_channels, 3);
 
+    // Prepare objects
+    Object objects[2];
+
+    // African head
+    objects[0].num_triangles = african_head_triangles.size();
+    objects[0].tex_width = african_head_tex_width;
+    objects[0].tex_height = african_head_tex_height;
+
+    // Drone
+    objects[1].num_triangles = drone_triangles.size();
+    objects[1].tex_width = drone_tex_width;
+    objects[1].tex_height = drone_tex_height;
+
+    // Allocate memory on device
+    CHECK_CUDA(cudaMalloc(&objects[0].triangles, african_head_triangles.size() * sizeof(Triangle)));
+    CHECK_CUDA(cudaMalloc(&objects[0].texture, african_head_tex_width * african_head_tex_height * 3 * sizeof(unsigned char)));
+    CHECK_CUDA(cudaMalloc(&objects[1].triangles, drone_triangles.size() * sizeof(Triangle)));
+    CHECK_CUDA(cudaMalloc(&objects[1].texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char)));
+
+    // Copy data to device
+    CHECK_CUDA(cudaMemcpy(objects[0].triangles, african_head_triangles.data(), african_head_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(objects[0].texture, african_head_texture, african_head_tex_width * african_head_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(objects[1].triangles, drone_triangles.data(), drone_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(objects[1].texture, drone_texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+
+    // Generate random model matrices for each scene
+    std::vector<Mat4f> african_head_matrices(max_num_scenes);
+    std::vector<Mat4f> drone_matrices(max_num_scenes);
+    for (int i = 0; i < max_num_scenes; ++i) {
+        african_head_matrices[i] = generate_random_model_matrix();
+        drone_matrices[i] = generate_random_model_matrix();
+    }
+
+    // Allocate and copy model matrices to device
+    CHECK_CUDA(cudaMalloc(&objects[0].model_matrices, max_num_scenes * sizeof(Mat4f)));
+    CHECK_CUDA(cudaMalloc(&objects[1].model_matrices, max_num_scenes * sizeof(Mat4f)));
+    CHECK_CUDA(cudaMemcpy(objects[0].model_matrices, african_head_matrices.data(), max_num_scenes * sizeof(Mat4f), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(objects[1].model_matrices, drone_matrices.data(), max_num_scenes * sizeof(Mat4f), cudaMemcpyHostToDevice));
+
+    // Allocate output buffer
+    unsigned char* d_output;
+    CHECK_CUDA(cudaMalloc(&d_output, max_num_scenes * width * height * 3 * sizeof(unsigned char)));
+    CHECK_CUDA(cudaMemset(d_output, 0, max_num_scenes * width * height * 3 * sizeof(unsigned char))); // Clear output buffer
+
+    // Copy objects to device
+    Object* d_objects;
+    CHECK_CUDA(cudaMalloc(&d_objects, 2 * sizeof(Object)));
+    CHECK_CUDA(cudaMemcpy(d_objects, objects, 2 * sizeof(Object), cudaMemcpyHostToDevice));
+
     for (int num_scenes : scenes_to_test) {
-        // Prepare objects
-        Object objects[2];
-
-        // African head
-        objects[0].num_triangles = african_head_triangles.size();
-        objects[0].tex_width = african_head_tex_width;
-        objects[0].tex_height = african_head_tex_height;
-
-        // Drone
-        objects[1].num_triangles = drone_triangles.size();
-        objects[1].tex_width = drone_tex_width;
-        objects[1].tex_height = drone_tex_height;
-
         // Start timing here
         auto start_time = std::chrono::high_resolution_clock::now();
-
-        // Allocate memory on device
-        CHECK_CUDA(cudaMalloc(&objects[0].triangles, african_head_triangles.size() * sizeof(Triangle)));
-        CHECK_CUDA(cudaMalloc(&objects[0].texture, african_head_tex_width * african_head_tex_height * 3 * sizeof(unsigned char)));
-        CHECK_CUDA(cudaMalloc(&objects[1].triangles, drone_triangles.size() * sizeof(Triangle)));
-        CHECK_CUDA(cudaMalloc(&objects[1].texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char)));
-
-        // Copy data to device
-        CHECK_CUDA(cudaMemcpy(objects[0].triangles, african_head_triangles.data(), african_head_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-        CHECK_CUDA(cudaMemcpy(objects[0].texture, african_head_texture, african_head_tex_width * african_head_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-        CHECK_CUDA(cudaMemcpy(objects[1].triangles, drone_triangles.data(), drone_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-        CHECK_CUDA(cudaMemcpy(objects[1].texture, drone_texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-
-        // Generate random model matrices for each scene
-        std::vector<Mat4f> african_head_matrices(num_scenes);
-        std::vector<Mat4f> drone_matrices(num_scenes);
-        for (int i = 0; i < num_scenes; ++i) {
-            african_head_matrices[i] = generate_random_model_matrix();
-            drone_matrices[i] = generate_random_model_matrix();
-        }
-
-        // Allocate and copy model matrices to device
-        CHECK_CUDA(cudaMalloc(&objects[0].model_matrices, num_scenes * sizeof(Mat4f)));
-        CHECK_CUDA(cudaMalloc(&objects[1].model_matrices, num_scenes * sizeof(Mat4f)));
-        CHECK_CUDA(cudaMemcpy(objects[0].model_matrices, african_head_matrices.data(), num_scenes * sizeof(Mat4f), cudaMemcpyHostToDevice));
-        CHECK_CUDA(cudaMemcpy(objects[1].model_matrices, drone_matrices.data(), num_scenes * sizeof(Mat4f), cudaMemcpyHostToDevice));
-
-        // Allocate output buffer
-        unsigned char* d_output;
-        CHECK_CUDA(cudaMalloc(&d_output, num_scenes * width * height * 3 * sizeof(unsigned char)));
-        CHECK_CUDA(cudaMemset(d_output, 0, num_scenes * width * height * 3 * sizeof(unsigned char))); // Clear output buffer
-
-        // Copy objects to device
-        Object* d_objects;
-        CHECK_CUDA(cudaMalloc(&d_objects, 2 * sizeof(Object)));
-        CHECK_CUDA(cudaMemcpy(d_objects, objects, 2 * sizeof(Object), cudaMemcpyHostToDevice));
 
         // Launch kernel
         dim3 block_size(16, 16);
@@ -352,17 +343,18 @@ int main() {
             stbi_write_png(filename, width, height, 3, output + i * width * height * 3, width * 3);
         }
 
-        // Clean up
         delete[] output;
-        CHECK_CUDA(cudaFree(objects[0].triangles));
-        CHECK_CUDA(cudaFree(objects[0].texture));
-        CHECK_CUDA(cudaFree(objects[1].triangles));
-        CHECK_CUDA(cudaFree(objects[1].texture));
-        CHECK_CUDA(cudaFree(objects[0].model_matrices));
-        CHECK_CUDA(cudaFree(objects[1].model_matrices));
-        CHECK_CUDA(cudaFree(d_output));
-        CHECK_CUDA(cudaFree(d_objects));
     }
+
+    // Clean up
+    CHECK_CUDA(cudaFree(objects[0].triangles));
+    CHECK_CUDA(cudaFree(objects[0].texture));
+    CHECK_CUDA(cudaFree(objects[1].triangles));
+    CHECK_CUDA(cudaFree(objects[1].texture));
+    CHECK_CUDA(cudaFree(objects[0].model_matrices));
+    CHECK_CUDA(cudaFree(objects[1].model_matrices));
+    CHECK_CUDA(cudaFree(d_output));
+    CHECK_CUDA(cudaFree(d_objects));
 
     // Clean up textures
     stbi_image_free(african_head_texture);
