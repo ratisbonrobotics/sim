@@ -15,15 +15,6 @@ struct Vec3f {
     Vec3f(float x = 0, float y = 0, float z = 0) : x(x), y(y), z(z) {}
 };
 
-Vec3f translate(const Vec3f &v, const Vec3f &t) {
-    return Vec3f(v.x + t.x, v.y + t.y, v.z + t.z);
-}
-
-Vec3f perspectiveProject(const Vec3f &v, float distance) {
-    float scale = distance / (distance + v.z);
-    return Vec3f(v.x * scale, v.y * scale, v.z);
-}
-
 void drawLine(int x0, int y0, int x1, int y1, TGAImage &image, const TGAColor &color) {
     bool steep = false;
     if (std::abs(x0 - x1) < std::abs(y0 - y1)) {
@@ -55,11 +46,11 @@ void drawLine(int x0, int y0, int x1, int y1, TGAImage &image, const TGAColor &c
     }
 }
 
-void drawWireframe(const std::vector<Vec3f>& verts, const std::vector<std::vector<int>>& faces, TGAImage& image, const TGAColor& color, const Vec3f& position, float cameraDistance) {
+void drawWireframe(const std::vector<Vec3f>& verts, const std::vector<std::vector<int>>& faces, TGAImage& image, const TGAColor& color) {
     for (const auto& face : faces) {
         for (int j = 0; j < 3; j++) {
-            Vec3f v0 = perspectiveProject(translate(verts[face[j]], position), cameraDistance);
-            Vec3f v1 = perspectiveProject(translate(verts[face[(j + 1) % 3]], position), cameraDistance);
+            Vec3f v0 = verts[face[j]];
+            Vec3f v1 = verts[face[(j + 1) % 3]];
 
             int x0 = (v0.x + 1.0f) * width / 2.0f;
             int y0 = (v0.y + 1.0f) * height / 2.0f;
@@ -108,10 +99,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    Vec3f position(0, 0, 30);
-    float cameraDistance = 60.0f;
-
-    drawWireframe(vertices, faces, image, white, position, cameraDistance);
+    drawWireframe(vertices, faces, image, white);
 
     image.flip_vertically();
     image.write_tga_file("output.tga");
