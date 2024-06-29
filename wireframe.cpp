@@ -15,6 +15,15 @@ public:
     Vec3f(float x = 0, float y = 0, float z = 0) : x(x), y(y), z(z) {}
 };
 
+Vec3f translate(const Vec3f& v, const Vec3f& t) {
+    return Vec3f(v.x + t.x, v.y + t.y, v.z + t.z);
+}
+
+Vec3f perspective_project(const Vec3f& v, float distance) {
+    float scale = distance / (distance + v.z);
+    return Vec3f(v.x * scale, v.y * scale, v.z);
+}
+
 void line(int x0, int y0, int x1, int y1, TGAImage &image, const TGAColor &color) {
     bool steep = false;
     if (std::abs(x0-x1)<std::abs(y0-y1)) {
@@ -45,11 +54,16 @@ void line(int x0, int y0, int x1, int y1, TGAImage &image, const TGAColor &color
     }
 }
 
-void draw_wireframe(const std::vector<Vec3f>& verts, const std::vector<std::vector<int>>& faces, TGAImage& image, const TGAColor& color) {
+void draw_wireframe(const std::vector<Vec3f>& verts, const std::vector<std::vector<int>>& faces, TGAImage& image, const TGAColor& color, const Vec3f& position, float camera_distance) {
     for (const auto& face : faces) {
         for (int j = 0; j < 3; j++) {
-            Vec3f v0 = verts[face[j]];
-            Vec3f v1 = verts[face[(j+1)%3]];
+            Vec3f v0 = translate(verts[face[j]], position);
+            Vec3f v1 = translate(verts[face[(j+1)%3]], position);
+            
+            // Apply perspective projection
+            v0 = perspective_project(v0, camera_distance);
+            v1 = perspective_project(v1, camera_distance);
+            
             int x0 = (v0.x+1.)*width/2.;
             int y0 = (v0.y+1.)*height/2.;
             int x1 = (v1.x+1.)*width/2.;
@@ -98,9 +112,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    draw_wireframe(verts, faces, image, white);
+    // Specify the position in 3D space
+    Vec3f position(0, 0, 30); // Example position
+    float camera_distance = 60.0f; // Adjust this value to change the perspective effect
 
-    image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
+    draw_wireframe(verts, faces, image, white, position, camera_distance);
+
+    image.flip_vertically();
     image.write_tga_file("output.tga");
     return 0;
 }
