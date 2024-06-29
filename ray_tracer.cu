@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <algorithm>
+#include <random>
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -73,7 +74,7 @@ struct Object {
     unsigned char* texture;
     int tex_width;
     int tex_height;
-    Mat4f model_matrix[2];  // Two model matrices, one for each scene
+    Mat4f* model_matrices;  // Array of model matrices, one for each scene
 };
 
 __device__ bool ray_triangle_intersect(const Ray& ray, const Triangle& triangle, float& t, float& u, float& v) {
@@ -100,11 +101,12 @@ __device__ bool ray_triangle_intersect(const Ray& ray, const Triangle& triangle,
     return t > 1e-5;
 }
 
-__global__ void ray_trace_kernel(Object* objects, int num_objects, unsigned char* output, int width, int height, int scene_index) {
+__global__ void ray_trace_kernel(Object* objects, int num_objects, unsigned char* output, int width, int height, int num_scenes) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int scene_index = blockIdx.z;
 
-    if (x >= width || y >= height) return;
+    if (x >= width || y >= height || scene_index >= num_scenes) return;
 
     float aspect_ratio = (float)width / height;
     float fov = 3.14159f / 4.0f;
@@ -125,8 +127,8 @@ __global__ void ray_trace_kernel(Object* objects, int num_objects, unsigned char
         for (int i = 0; i < object.num_triangles; i++) {
             Triangle transformed_triangle = object.triangles[i];
             for (int j = 0; j < 3; j++) {
-                transformed_triangle.v[j] = object.model_matrix[scene_index].transform(object.triangles[i].v[j]);
-                transformed_triangle.n[j] = object.model_matrix[scene_index].transformNormal(object.triangles[i].n[j]);
+                transformed_triangle.v[j] = object.model_matrices[scene_index].transform(object.triangles[i].v[j]);
+                transformed_triangle.n[j] = object.model_matrices[scene_index].transformNormal(object.triangles[i].n[j]);
             }
 
             float t, u, v;
@@ -161,9 +163,10 @@ __global__ void ray_trace_kernel(Object* objects, int num_objects, unsigned char
         }
     }
 
-    output[(y * width + x) * 3 + 0] = static_cast<unsigned char>(min(color.x * 255.0f, 255.0f));
-    output[(y * width + x) * 3 + 1] = static_cast<unsigned char>(min(color.y * 255.0f, 255.0f));
-    output[(y * width + x) * 3 + 2] = static_cast<unsigned char>(min(color.z * 255.0f, 255.0f));
+    int output_index = (scene_index * height * width + y * width + x) * 3;
+    output[output_index + 0] = static_cast<unsigned char>(min(color.x * 255.0f, 255.0f));
+    output[output_index + 1] = static_cast<unsigned char>(min(color.y * 255.0f, 255.0f));
+    output[output_index + 2] = static_cast<unsigned char>(min(color.z * 255.0f, 255.0f));
 }
 
 void load_obj(const char* filename, std::vector<Triangle>& triangles) {
@@ -210,9 +213,42 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
     }
 }
 
+Mat4f generate_random_model_matrix() {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<> dis(-1.0, 1.0);
+    std::uniform_real_distribution<> scale_dis(0.1, 0.3);
+    std::uniform_real_distribution<> angle_dis(0, 2 * M_PI);
+
+    Mat4f matrix;
+
+    // Random translation
+    matrix.m[0][3] = dis(gen) * 2;  // x translation
+    matrix.m[1][3] = dis(gen);      // y translation
+    matrix.m[2][3] = dis(gen) * 2 - 4;  // z translation (between -2 and -6)
+
+    // Random rotation (around y-axis for simplicity)
+    float angle = angle_dis(gen);
+    float cos_angle = cos(angle);
+    float sin_angle = sin(angle);
+    matrix.m[0][0] = cos_angle;
+    matrix.m[0][2] = sin_angle;
+    matrix.m[2][0] = -sin_angle;
+    matrix.m[2][2] = cos_angle;
+
+    /* // Random scale
+    float scale = scale_dis(gen);
+    matrix.m[0][0] *= scale;
+    matrix.m[1][1] *= scale;
+    matrix.m[2][2] *= scale;*/
+
+    return matrix;
+}
+
 int main() {
     const int width = 800;
     const int height = 600;
+    const int num_scenes = 4;  // Number of scenes to render in parallel
 
     // Load African head
     std::vector<Triangle> african_head_triangles;
@@ -248,52 +284,10 @@ int main() {
     objects[0].tex_width = african_head_tex_width;
     objects[0].tex_height = african_head_tex_height;
 
-    // African head model matrices
-    // Scene 1
-    objects[0].model_matrix[0].m[0][3] = -1.0f;  // Move left
-    objects[0].model_matrix[0].m[1][3] = 0.0f;
-    objects[0].model_matrix[0].m[2][3] = -3.0f;
-    float angle = 3.14159f / 4.0f; // 45 degrees in radians
-    float cos_angle = cos(angle);
-    float sin_angle = sin(angle);
-    objects[0].model_matrix[0].m[0][0] = cos_angle;
-    objects[0].model_matrix[0].m[0][2] = sin_angle;
-    objects[0].model_matrix[0].m[2][0] = -sin_angle;
-    objects[0].model_matrix[0].m[2][2] = cos_angle;
-
-    // Scene 2
-    objects[0].model_matrix[1].m[0][3] = 1.0f;  // Move right
-    objects[0].model_matrix[1].m[1][3] = 0.5f;  // Move up
-    objects[0].model_matrix[1].m[2][3] = -3.5f;
-    angle = 3.14159f / 3.0f; // 60 degrees in radians
-    cos_angle = cos(angle);
-    sin_angle = sin(angle);
-    objects[0].model_matrix[1].m[0][0] = cos_angle;
-    objects[0].model_matrix[1].m[0][2] = sin_angle;
-    objects[0].model_matrix[1].m[2][0] = -sin_angle;
-    objects[0].model_matrix[1].m[2][2] = cos_angle;
-
     // Drone
     objects[1].num_triangles = drone_triangles.size();
     objects[1].tex_width = drone_tex_width;
     objects[1].tex_height = drone_tex_height;
-
-    // Drone model matrices
-    // Scene 1
-    objects[1].model_matrix[0].m[0][3] = 1.0f;   // Move right
-    objects[1].model_matrix[0].m[1][3] = 0.5f;   // Move up
-    objects[1].model_matrix[0].m[2][3] = -2.5f;  // Move closer
-    objects[1].model_matrix[0].m[0][0] = 0.1f;   // Scale down
-    objects[1].model_matrix[0].m[1][1] = 0.1f;
-    objects[1].model_matrix[0].m[2][2] = 0.1f;
-
-    // Scene 2
-    objects[1].model_matrix[1].m[0][3] = -1.5f;  // Move left
-    objects[1].model_matrix[1].m[1][3] = -0.5f;  // Move down
-    objects[1].model_matrix[1].m[2][3] = -2.0f;  // Move closer
-    objects[1].model_matrix[1].m[0][0] = 0.15f;  // Scale up slightly
-    objects[1].model_matrix[1].m[1][1] = 0.15f;
-    objects[1].model_matrix[1].m[2][2] = 0.15f;
 
     // Allocate memory on device
     CHECK_CUDA(cudaMalloc(&objects[0].triangles, african_head_triangles.size() * sizeof(Triangle)));
@@ -307,46 +301,60 @@ int main() {
     CHECK_CUDA(cudaMemcpy(objects[1].triangles, drone_triangles.data(), drone_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(objects[1].texture, drone_texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
 
-    // Allocate output buffers
-    unsigned char* d_output1, *d_output2;
-    CHECK_CUDA(cudaMalloc(&d_output1, width * height * 3 * sizeof(unsigned char)));
-    CHECK_CUDA(cudaMalloc(&d_output2, width * height * 3 * sizeof(unsigned char)));
-    CHECK_CUDA(cudaMemset(d_output1, 0, width * height * 3 * sizeof(unsigned char))); // Clear output buffer 1
-    CHECK_CUDA(cudaMemset(d_output2, 0, width * height * 3 * sizeof(unsigned char))); // Clear output buffer 2
+    // Generate random model matrices for each scene
+    std::vector<Mat4f> african_head_matrices(num_scenes);
+    std::vector<Mat4f> drone_matrices(num_scenes);
+    for (int i = 0; i < num_scenes; ++i) {
+        african_head_matrices[i] = generate_random_model_matrix();
+        drone_matrices[i] = generate_random_model_matrix();
+    }
+
+    // Allocate and copy model matrices to device
+    CHECK_CUDA(cudaMalloc(&objects[0].model_matrices, num_scenes * sizeof(Mat4f)));
+    CHECK_CUDA(cudaMalloc(&objects[1].model_matrices, num_scenes * sizeof(Mat4f)));
+    CHECK_CUDA(cudaMemcpy(objects[0].model_matrices, african_head_matrices.data(), num_scenes * sizeof(Mat4f), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(objects[1].model_matrices, drone_matrices.data(), num_scenes * sizeof(Mat4f), cudaMemcpyHostToDevice));
+
+    // Allocate output buffer
+    unsigned char* d_output;
+    CHECK_CUDA(cudaMalloc(&d_output, num_scenes * width * height * 3 * sizeof(unsigned char)));
+    CHECK_CUDA(cudaMemset(d_output, 0, num_scenes * width * height * 3 * sizeof(unsigned char))); // Clear output buffer
 
     // Copy objects to device
     Object* d_objects;
     CHECK_CUDA(cudaMalloc(&d_objects, 2 * sizeof(Object)));
     CHECK_CUDA(cudaMemcpy(d_objects, objects, 2 * sizeof(Object), cudaMemcpyHostToDevice));
 
-    // Launch kernels
+    // Launch kernel
     dim3 block_size(16, 16);
-    dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
+    dim3 grid_size((width + block_size.x - 1) / block_size.x, 
+                   (height + block_size.y - 1) / block_size.y, 
+                   num_scenes);
 
-    ray_trace_kernel<<<grid_size, block_size>>>(d_objects, 2, d_output1, width, height, 0);
-    ray_trace_kernel<<<grid_size, block_size>>>(d_objects, 2, d_output2, width, height, 1);
+    ray_trace_kernel<<<grid_size, block_size>>>(d_objects, 2, d_output, width, height, num_scenes);
 
     // Copy results back to host
-    unsigned char* output1 = new unsigned char[width * height * 3];
-    unsigned char* output2 = new unsigned char[width * height * 3];
-    CHECK_CUDA(cudaMemcpy(output1, d_output1, width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(output2, d_output2, width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
+    unsigned char* output = new unsigned char[num_scenes * width * height * 3];
+    CHECK_CUDA(cudaMemcpy(output, d_output, num_scenes * width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
 
     // Save output images
-    stbi_write_png("output_1.png", width, height, 3, output1, width * 3);
-    stbi_write_png("output_2.png", width, height, 3, output2, width * 3);
+    for (int i = 0; i < num_scenes; ++i) {
+        char filename[20];
+        snprintf(filename, sizeof(filename), "output_%04d.png", i);
+        stbi_write_png(filename, width, height, 3, output + i * width * height * 3, width * 3);
+    }
 
     // Clean up
-    delete[] output1;
-    delete[] output2;
+    delete[] output;
     stbi_image_free(african_head_texture);
     stbi_image_free(drone_texture);
     CHECK_CUDA(cudaFree(objects[0].triangles));
     CHECK_CUDA(cudaFree(objects[0].texture));
     CHECK_CUDA(cudaFree(objects[1].triangles));
     CHECK_CUDA(cudaFree(objects[1].texture));
-    CHECK_CUDA(cudaFree(d_output1));
-    CHECK_CUDA(cudaFree(d_output2));
+    CHECK_CUDA(cudaFree(objects[0].model_matrices));
+    CHECK_CUDA(cudaFree(objects[1].model_matrices));
+    CHECK_CUDA(cudaFree(d_output));
     CHECK_CUDA(cudaFree(d_objects));
 
     return 0;
