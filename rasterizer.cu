@@ -102,7 +102,10 @@ __host__ __device__ Mat4f perspective(float fov, float aspect, float near, float
     return result;
 }
 
-__global__ void rasterize_kernel(Object* objects, int num_objects, unsigned char* output, float* zbuffer, int width, int height) {
+__global__ void rasterize_kernel(Vec3f* projected_vertices, Triangle* triangles, int* triangle_counts, 
+                                 unsigned char* textures, int* tex_widths, int* tex_heights, 
+                                 Mat4f* model_matrices, unsigned char* output, float* zbuffer, 
+                                 int width, int height, int num_objects) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -110,42 +113,31 @@ __global__ void rasterize_kernel(Object* objects, int num_objects, unsigned char
 
     int flipped_y = height - 1 - y;
     int idx = flipped_y * width + x;
-    zbuffer[idx] = FLT_MAX;  // Initialize z-buffer to maximum depth
+    zbuffer[idx] = FLT_MAX;
 
     Vec3f color(0.2f, 0.2f, 0.2f); // Ambient light
+    Vec3f light_dir = Vec3f(1, 1, 1).normalize();  // Light direction
 
-    // Create projection matrix
-    float fov = 3.14159f / 4.0f;  // 45 degrees
-    float aspect = (float)width / height;
-    float near = 0.1f;
-    float far = 100.0f;
-    Mat4f proj = perspective(fov, aspect, near, far);
+    Vec3f P(x, flipped_y, 0);
+
+    int vertex_offset = 0;
+    int triangle_offset = 0;
+    int texture_offset = 0;
 
     for (int obj = 0; obj < num_objects; obj++) {
-        Object& object = objects[obj];
-        for (int i = 0; i < object.num_triangles; i++) {
-            Triangle transformed_triangle = object.triangles[i];
-            for (int j = 0; j < 3; j++) {
-                // Apply model and projection transformations
-                Vec3f v = object.model_matrix.transform(object.triangles[i].v[j]);
-                v = proj.transform(v);
-                transformed_triangle.v[j] = v;
-                
-                // Transform normals (only by model matrix, not projection)
-                transformed_triangle.n[j] = object.model_matrix.transformNormal(object.triangles[i].n[j]);
-            }
-
+        for (int i = 0; i < triangle_counts[obj]; i++) {
+            Triangle& tri = triangles[triangle_offset + i];
+            
             Vec3f screen_coords[3];
             for (int j = 0; j < 3; j++) {
-                // Perspective divide and viewport transform
+                Vec3f v = projected_vertices[vertex_offset + i*3 + j];
                 screen_coords[j] = Vec3f(
-                    (transformed_triangle.v[j].x / transformed_triangle.v[j].z + 1.0f) * width / 2.0f,
-                    height - 1 - (transformed_triangle.v[j].y / transformed_triangle.v[j].z + 1.0f) * height / 2.0f,
-                    transformed_triangle.v[j].z
+                    (v.x / v.z + 1.0f) * width / 2.0f,
+                    height - 1 - (v.y / v.z + 1.0f) * height / 2.0f,
+                    v.z
                 );
             }
 
-            Vec3f P(x, flipped_y, 0);
             Vec3f bc_screen = barycentric(screen_coords[0], screen_coords[1], screen_coords[2], P);
             if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;
 
@@ -153,34 +145,33 @@ __global__ void rasterize_kernel(Object* objects, int num_objects, unsigned char
             if (frag_depth < zbuffer[idx]) {
                 zbuffer[idx] = frag_depth;
 
-                float tex_u = bc_screen.x * object.triangles[i].uv[0].u + bc_screen.y * object.triangles[i].uv[1].u + bc_screen.z * object.triangles[i].uv[2].u;
-                float tex_v = bc_screen.x * object.triangles[i].uv[0].v + bc_screen.y * object.triangles[i].uv[1].v + bc_screen.z * object.triangles[i].uv[2].v;
+                float tex_u = bc_screen.x * tri.uv[0].u + bc_screen.y * tri.uv[1].u + bc_screen.z * tri.uv[2].u;
+                float tex_v = bc_screen.x * tri.uv[0].v + bc_screen.y * tri.uv[1].v + bc_screen.z * tri.uv[2].v;
 
-                int tex_x = tex_u * object.tex_width;
-                int tex_y = (1.0f - tex_v) * object.tex_height; // Flip V coordinate
+                int tex_x = tex_u * tex_widths[obj];
+                int tex_y = (1.0f - tex_v) * tex_heights[obj];
 
-                if (tex_x >= 0 && tex_x < object.tex_width && tex_y >= 0 && tex_y < object.tex_height) {
-                    Vec3f tex_color;
-                    tex_color.x = object.texture[(tex_y * object.tex_width + tex_x) * 3 + 0] / 255.0f;
-                    tex_color.y = object.texture[(tex_y * object.tex_width + tex_x) * 3 + 1] / 255.0f;
-                    tex_color.z = object.texture[(tex_y * object.tex_width + tex_x) * 3 + 2] / 255.0f;
+                Vec3f tex_color;
+                int tex_idx = texture_offset + (tex_y * tex_widths[obj] + tex_x) * 3;
+                tex_color.x = textures[tex_idx + 0] / 255.0f;
+                tex_color.y = textures[tex_idx + 1] / 255.0f;
+                tex_color.z = textures[tex_idx + 2] / 255.0f;
 
-                    Vec3f normal = (transformed_triangle.n[0] * bc_screen.x +
-                                    transformed_triangle.n[1] * bc_screen.y +
-                                    transformed_triangle.n[2] * bc_screen.z).normalize();
+                Vec3f normal = (tri.n[0] * bc_screen.x + tri.n[1] * bc_screen.y + tri.n[2] * bc_screen.z).normalize();
+                normal = model_matrices[obj].transformNormal(normal);
 
-                    Vec3f light_dir = Vec3f(1, 1, 1).normalize();  // Light direction from top-right-front
-                    float diffuse = max(0.0f, normal.dot(light_dir));
-
-                    color = tex_color * (0.3f + 0.7f * diffuse);  // Adjusted ambient and diffuse factors
-                }
+                float diffuse = max(0.0f, normal.dot(light_dir));
+                color = tex_color * (0.3f + 0.7f * diffuse);
             }
         }
+        vertex_offset += triangle_counts[obj] * 3;
+        triangle_offset += triangle_counts[obj];
+        texture_offset += tex_widths[obj] * tex_heights[obj] * 3;
     }
 
-    output[(flipped_y * width + x) * 3 + 0] = static_cast<unsigned char>(min(color.x * 255.0f, 255.0f));
-    output[(flipped_y * width + x) * 3 + 1] = static_cast<unsigned char>(min(color.y * 255.0f, 255.0f));
-    output[(flipped_y * width + x) * 3 + 2] = static_cast<unsigned char>(min(color.z * 255.0f, 255.0f));
+    output[idx * 3 + 0] = static_cast<unsigned char>(min(color.x * 255.0f, 255.0f));
+    output[idx * 3 + 1] = static_cast<unsigned char>(min(color.y * 255.0f, 255.0f));
+    output[idx * 3 + 2] = static_cast<unsigned char>(min(color.z * 255.0f, 255.0f));
 }
 
 void load_obj(const char* filename, std::vector<Triangle>& triangles) {
@@ -242,7 +233,6 @@ int main() {
         printf("Failed to load African head texture\n");
         return 1;
     }
-    printf("Loaded African head texture: %dx%d, %d channels\n", african_head_tex_width, african_head_tex_height, african_head_tex_channels);
 
     // Load drone
     std::vector<Triangle> drone_triangles;
@@ -255,52 +245,86 @@ int main() {
         printf("Failed to load drone texture\n");
         return 1;
     }
-    printf("Loaded drone texture: %dx%d, %d channels\n", drone_tex_width, drone_tex_height, drone_tex_channels);
 
-    // Prepare objects
-    Object objects[2];
-
-    // African head
-    objects[0].num_triangles = african_head_triangles.size();
-    objects[0].tex_width = african_head_tex_width;
-    objects[0].tex_height = african_head_tex_height;
-
-    // African head model matrix
-    objects[0].model_matrix.m[0][3] = -1.0f;  // Move left
-    objects[0].model_matrix.m[1][3] = 0.0f;
-    objects[0].model_matrix.m[2][3] = -3.0f;
-    float angle = 3.14159f / 4.0f; // 45 degrees in radians
+    // Prepare model matrices
+    Mat4f african_head_model;
+    african_head_model.m[0][3] = -1.0f;
+    african_head_model.m[1][3] = 0.0f;
+    african_head_model.m[2][3] = -3.0f;
+    float angle = 3.14159f / 4.0f;
     float cos_angle = cos(angle);
     float sin_angle = sin(angle);
-    objects[0].model_matrix.m[0][0] = cos_angle;
-    objects[0].model_matrix.m[0][2] = sin_angle;
-    objects[0].model_matrix.m[2][0] = -sin_angle;
-    objects[0].model_matrix.m[2][2] = cos_angle;
+    african_head_model.m[0][0] = cos_angle;
+    african_head_model.m[0][2] = sin_angle;
+    african_head_model.m[2][0] = -sin_angle;
+    african_head_model.m[2][2] = cos_angle;
 
-    // Drone
-    objects[1].num_triangles = drone_triangles.size();
-    objects[1].tex_width = drone_tex_width;
-    objects[1].tex_height = drone_tex_height;
+    Mat4f drone_model;
+    drone_model.m[0][3] = 1.0f;
+    drone_model.m[1][3] = 0.5f;
+    drone_model.m[2][3] = -2.5f;
+    drone_model.m[0][0] = 0.1f;
+    drone_model.m[1][1] = 0.1f;
+    drone_model.m[2][2] = 0.1f;
 
-    // Drone model matrix
-    objects[1].model_matrix.m[0][3] = 1.0f;   // Move right
-    objects[1].model_matrix.m[1][3] = 0.5f;   // Move up
-    objects[1].model_matrix.m[2][3] = -2.5f;  // Move closer
-    objects[1].model_matrix.m[0][0] = 0.1f;   // Scale down
-    objects[1].model_matrix.m[1][1] = 0.1f;
-    objects[1].model_matrix.m[2][2] = 0.1f;
+    // Prepare projection matrix
+    float fov = 3.14159f / 4.0f;
+    float aspect = (float)width / height;
+    float near = 0.1f;
+    float far = 100.0f;
+    Mat4f proj = perspective(fov, aspect, near, far);
 
-    // Allocate memory on device
-    CHECK_CUDA(cudaMalloc(&objects[0].triangles, african_head_triangles.size() * sizeof(Triangle)));
-    CHECK_CUDA(cudaMalloc(&objects[0].texture, african_head_tex_width * african_head_tex_height * 3 * sizeof(unsigned char)));
-    CHECK_CUDA(cudaMalloc(&objects[1].triangles, drone_triangles.size() * sizeof(Triangle)));
-    CHECK_CUDA(cudaMalloc(&objects[1].texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char)));
+    // Project vertices on CPU
+    std::vector<Vec3f> projected_vertices;
+    Mat4f model_matrices[2] = {african_head_model, drone_model};
+    std::vector<Triangle>* triangle_lists[2] = {&african_head_triangles, &drone_triangles};
 
-    // Copy data to device
-    CHECK_CUDA(cudaMemcpy(objects[0].triangles, african_head_triangles.data(), african_head_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(objects[0].texture, african_head_texture, african_head_tex_width * african_head_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(objects[1].triangles, drone_triangles.data(), drone_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(objects[1].texture, drone_texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+    for (int obj = 0; obj < 2; obj++) {
+        for (const auto& tri : *triangle_lists[obj]) {
+            for (int j = 0; j < 3; j++) {
+                Vec3f v = model_matrices[obj].transform(tri.v[j]);
+                v = proj.transform(v);
+                projected_vertices.push_back(v);
+            }
+        }
+    }
+
+    // Prepare data for GPU
+    Triangle* d_all_triangles;
+    unsigned char* d_all_textures;
+    int* d_triangle_counts;
+    int* d_tex_widths;
+    int* d_tex_heights;
+    Mat4f* d_model_matrices;
+    Vec3f* d_projected_vertices;
+
+    int total_triangles = african_head_triangles.size() + drone_triangles.size();
+    int total_texture_size = (african_head_tex_width * african_head_tex_height + drone_tex_width * drone_tex_height) * 3;
+
+    CHECK_CUDA(cudaMalloc(&d_all_triangles, total_triangles * sizeof(Triangle)));
+    CHECK_CUDA(cudaMalloc(&d_all_textures, total_texture_size * sizeof(unsigned char)));
+    CHECK_CUDA(cudaMalloc(&d_triangle_counts, 2 * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_tex_widths, 2 * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_tex_heights, 2 * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_model_matrices, 2 * sizeof(Mat4f)));
+    CHECK_CUDA(cudaMalloc(&d_projected_vertices, projected_vertices.size() * sizeof(Vec3f)));
+
+    // Copy data to GPU
+    CHECK_CUDA(cudaMemcpy(d_all_triangles, african_head_triangles.data(), african_head_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_all_triangles + african_head_triangles.size(), drone_triangles.data(), drone_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+
+    CHECK_CUDA(cudaMemcpy(d_all_textures, african_head_texture, african_head_tex_width * african_head_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_all_textures + african_head_tex_width * african_head_tex_height * 3, drone_texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+
+    int triangle_counts[2] = {(int)african_head_triangles.size(), (int)drone_triangles.size()};
+    int tex_widths[2] = {african_head_tex_width, drone_tex_width};
+    int tex_heights[2] = {african_head_tex_height, drone_tex_height};
+
+    CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts, 2 * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths, 2 * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights, 2 * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, 2 * sizeof(Mat4f), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_projected_vertices, projected_vertices.data(), projected_vertices.size() * sizeof(Vec3f), cudaMemcpyHostToDevice));
 
     // Allocate output buffer and z-buffer
     unsigned char* d_output;
@@ -309,16 +333,13 @@ int main() {
     CHECK_CUDA(cudaMalloc(&d_zbuffer, width * height * sizeof(float)));
     CHECK_CUDA(cudaMemset(d_output, 0, width * height * 3 * sizeof(unsigned char))); // Clear output buffer
 
-    // Copy objects to device
-    Object* d_objects;
-    CHECK_CUDA(cudaMalloc(&d_objects, 2 * sizeof(Object)));
-    CHECK_CUDA(cudaMemcpy(d_objects, objects, 2 * sizeof(Object), cudaMemcpyHostToDevice));
-
     // Launch kernel
     dim3 block_size(16, 16);
     dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
 
-    rasterize_kernel<<<grid_size, block_size>>>(d_objects, 2, d_output, d_zbuffer, width, height);
+    rasterize_kernel<<<grid_size, block_size>>>(d_projected_vertices, d_all_triangles, d_triangle_counts, 
+                                                d_all_textures, d_tex_widths, d_tex_heights, 
+                                                d_model_matrices, d_output, d_zbuffer, width, height, 2);
 
     // Copy result back to host
     unsigned char* output = new unsigned char[width * height * 3];
@@ -331,13 +352,15 @@ int main() {
     delete[] output;
     stbi_image_free(african_head_texture);
     stbi_image_free(drone_texture);
-    CHECK_CUDA(cudaFree(objects[0].triangles));
-    CHECK_CUDA(cudaFree(objects[0].texture));
-    CHECK_CUDA(cudaFree(objects[1].triangles));
-    CHECK_CUDA(cudaFree(objects[1].texture));
+    CHECK_CUDA(cudaFree(d_all_triangles));
+    CHECK_CUDA(cudaFree(d_all_textures));
+    CHECK_CUDA(cudaFree(d_triangle_counts));
+    CHECK_CUDA(cudaFree(d_tex_widths));
+    CHECK_CUDA(cudaFree(d_tex_heights));
+    CHECK_CUDA(cudaFree(d_model_matrices));
+    CHECK_CUDA(cudaFree(d_projected_vertices));
     CHECK_CUDA(cudaFree(d_output));
     CHECK_CUDA(cudaFree(d_zbuffer));
-    CHECK_CUDA(cudaFree(d_objects));
 
     return 0;
 }
