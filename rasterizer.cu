@@ -169,14 +169,12 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
         return;
     }
 
-    std::vector<Vec3f> vertices;
+    std::vector<Vec3f> vertices, normals;
     std::vector<Vec2f> texcoords;
-    std::vector<Vec3f> normals;
+    std::string line, type;
 
-    std::string line;
     while (std::getline(file, line)) {
         std::istringstream iss(line);
-        std::string type;
         iss >> type;
 
         if (type == "v") {
