@@ -207,148 +207,122 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
 }
 
 int main() {
-    const int width = 800;
-    const int height = 600;
-
-    // Load African head
-    std::vector<Triangle> african_head_triangles;
-    load_obj("african_head.obj", african_head_triangles);
-    printf("Loaded African head: %zu triangles\n", african_head_triangles.size());
-
-    int african_head_tex_width, african_head_tex_height, african_head_tex_channels;
-    unsigned char* african_head_texture = stbi_load("african_head_diffuse.tga", &african_head_tex_width, &african_head_tex_height, &african_head_tex_channels, 3);
-    if (!african_head_texture) {
-        printf("Failed to load African head texture\n");
-        return 1;
-    }
-
-    // Load drone
-    std::vector<Triangle> drone_triangles;
-    load_obj("drone.obj", drone_triangles);
-    printf("Loaded drone: %zu triangles\n", drone_triangles.size());
-
-    int drone_tex_width, drone_tex_height, drone_tex_channels;
-    unsigned char* drone_texture = stbi_load("drone.png", &drone_tex_width, &drone_tex_height, &drone_tex_channels, 3);
-    if (!drone_texture) {
-        printf("Failed to load drone texture\n");
-        return 1;
+    const int width = 800, height = 600;
+    const int num_objects = 2;
+    
+    // Load objects and textures
+    std::vector<Triangle> triangles[num_objects];
+    unsigned char* textures[num_objects];
+    int tex_widths[num_objects], tex_heights[num_objects];
+    
+    load_obj("african_head.obj", triangles[0]);
+    load_obj("drone.obj", triangles[1]);
+    
+    textures[0] = stbi_load("african_head_diffuse.tga", &tex_widths[0], &tex_heights[0], nullptr, 3);
+    textures[1] = stbi_load("drone.png", &tex_widths[1], &tex_heights[1], nullptr, 3);
+    
+    for (int i = 0; i < num_objects; i++) {
+        if (!textures[i]) {
+            printf("Failed to load texture for object %d\n", i);
+            return 1;
+        }
     }
 
     // Prepare model matrices
-    Mat4f african_head_model;
-    african_head_model.m[0][3] = -1.0f;
-    african_head_model.m[1][3] = 0.0f;
-    african_head_model.m[2][3] = -3.0f;
+    Mat4f model_matrices[num_objects] = {
+        Mat4f(), // African head
+        Mat4f()  // Drone
+    };
+    
+    // African head transformation
+    model_matrices[0].m[0][3] = -1.0f;
+    model_matrices[0].m[2][3] = -3.0f;
     float angle = 3.14159f / 4.0f;
-    float cos_angle = cos(angle);
-    float sin_angle = sin(angle);
-    african_head_model.m[0][0] = cos_angle;
-    african_head_model.m[0][2] = sin_angle;
-    african_head_model.m[2][0] = -sin_angle;
-    african_head_model.m[2][2] = cos_angle;
+    model_matrices[0].m[0][0] = model_matrices[0].m[2][2] = cos(angle);
+    model_matrices[0].m[0][2] = -(model_matrices[0].m[2][0] = -sin(angle));
 
-    Mat4f drone_model;
-    drone_model.m[0][3] = 1.0f;
-    drone_model.m[1][3] = 0.5f;
-    drone_model.m[2][3] = -2.5f;
-    drone_model.m[0][0] = 0.1f;
-    drone_model.m[1][1] = 0.1f;
-    drone_model.m[2][2] = 0.1f;
+    // Drone transformation
+    model_matrices[1].m[0][3] = 1.0f;
+    model_matrices[1].m[1][3] = 0.5f;
+    model_matrices[1].m[2][3] = -2.5f;
+    model_matrices[1].m[0][0] = model_matrices[1].m[1][1] = model_matrices[1].m[2][2] = 0.1f;
 
     // Prepare projection matrix
-    float fov = 3.14159f / 4.0f;
-    float aspect = (float)width / height;
-    float near = 0.1f;
-    float far = 100.0f;
-    Mat4f proj = perspective(fov, aspect, near, far);
+    Mat4f proj = perspective(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
 
-    // Project vertices on CPU
+    // Project vertices
     std::vector<Vec3f> projected_vertices;
-    Mat4f model_matrices[2] = {african_head_model, drone_model};
-    std::vector<Triangle>* triangle_lists[2] = {&african_head_triangles, &drone_triangles};
-
-    for (int obj = 0; obj < 2; obj++) {
-        for (const auto& tri : *triangle_lists[obj]) {
+    for (int i = 0; i < num_objects; i++) {
+        for (const auto& tri : triangles[i]) {
             for (int j = 0; j < 3; j++) {
-                Vec3f v = model_matrices[obj].transform(tri.v[j]);
-                v = proj.transform(v);
-                projected_vertices.push_back(v);
+                projected_vertices.push_back(proj.transform(model_matrices[i].transform(tri.v[j])));
             }
         }
     }
 
-    // Prepare data for GPU
-    Triangle* d_all_triangles;
-    unsigned char* d_all_textures;
-    int* d_triangle_counts;
-    int* d_tex_widths;
-    int* d_tex_heights;
+    // Prepare GPU data
+    Triangle* d_triangles;
+    unsigned char* d_textures;
+    int* d_triangle_counts, *d_tex_widths, *d_tex_heights;
     Mat4f* d_model_matrices;
     Vec3f* d_projected_vertices;
-
-    int total_triangles = african_head_triangles.size() + drone_triangles.size();
-    int total_texture_size = (african_head_tex_width * african_head_tex_height + drone_tex_width * drone_tex_height) * 3;
-
-    CHECK_CUDA(cudaMalloc(&d_all_triangles, total_triangles * sizeof(Triangle)));
-    CHECK_CUDA(cudaMalloc(&d_all_textures, total_texture_size * sizeof(unsigned char)));
-    CHECK_CUDA(cudaMalloc(&d_triangle_counts, 2 * sizeof(int)));
-    CHECK_CUDA(cudaMalloc(&d_tex_widths, 2 * sizeof(int)));
-    CHECK_CUDA(cudaMalloc(&d_tex_heights, 2 * sizeof(int)));
-    CHECK_CUDA(cudaMalloc(&d_model_matrices, 2 * sizeof(Mat4f)));
-    CHECK_CUDA(cudaMalloc(&d_projected_vertices, projected_vertices.size() * sizeof(Vec3f)));
-
-    // Copy data to GPU
-    CHECK_CUDA(cudaMemcpy(d_all_triangles, african_head_triangles.data(), african_head_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_all_triangles + african_head_triangles.size(), drone_triangles.data(), drone_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-
-    CHECK_CUDA(cudaMemcpy(d_all_textures, african_head_texture, african_head_tex_width * african_head_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_all_textures + african_head_tex_width * african_head_tex_height * 3, drone_texture, drone_tex_width * drone_tex_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-
-    int triangle_counts[2] = {(int)african_head_triangles.size(), (int)drone_triangles.size()};
-    int tex_widths[2] = {african_head_tex_width, drone_tex_width};
-    int tex_heights[2] = {african_head_tex_height, drone_tex_height};
-
-    CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts, 2 * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths, 2 * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights, 2 * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, 2 * sizeof(Mat4f), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_projected_vertices, projected_vertices.data(), projected_vertices.size() * sizeof(Vec3f), cudaMemcpyHostToDevice));
-
-    // Allocate output buffer and z-buffer
     unsigned char* d_output;
     float* d_zbuffer;
+
+    int total_triangles = triangles[0].size() + triangles[1].size();
+    int total_texture_size = (tex_widths[0] * tex_heights[0] + tex_widths[1] * tex_heights[1]) * 3;
+
+    // Allocate GPU memory
+    CHECK_CUDA(cudaMalloc(&d_triangles, total_triangles * sizeof(Triangle)));
+    CHECK_CUDA(cudaMalloc(&d_textures, total_texture_size * sizeof(unsigned char)));
+    CHECK_CUDA(cudaMalloc(&d_triangle_counts, num_objects * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_tex_widths, num_objects * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_tex_heights, num_objects * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_model_matrices, num_objects * sizeof(Mat4f)));
+    CHECK_CUDA(cudaMalloc(&d_projected_vertices, projected_vertices.size() * sizeof(Vec3f)));
     CHECK_CUDA(cudaMalloc(&d_output, width * height * 3 * sizeof(unsigned char)));
     CHECK_CUDA(cudaMalloc(&d_zbuffer, width * height * sizeof(float)));
-    CHECK_CUDA(cudaMemset(d_output, 0, width * height * 3 * sizeof(unsigned char))); // Clear output buffer
+
+    // Copy data to GPU
+    int triangle_offset = 0, texture_offset = 0;
+    for (int i = 0; i < num_objects; i++) {
+        CHECK_CUDA(cudaMemcpy(d_triangles + triangle_offset, triangles[i].data(), triangles[i].size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_textures + texture_offset, textures[i], tex_widths[i] * tex_heights[i] * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+        triangle_offset += triangles[i].size();
+        texture_offset += tex_widths[i] * tex_heights[i] * 3;
+    }
+
+    int triangle_counts[num_objects] = {(int)triangles[0].size(), (int)triangles[1].size()};
+    CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts, num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths, num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights, num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_objects * sizeof(Mat4f), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_projected_vertices, projected_vertices.data(), projected_vertices.size() * sizeof(Vec3f), cudaMemcpyHostToDevice));
 
     // Launch kernel
     dim3 block_size(16, 16);
     dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
+    rasterize_kernel<<<grid_size, block_size>>>(d_projected_vertices, d_triangles, d_triangle_counts, 
+                                                d_textures, d_tex_widths, d_tex_heights, 
+                                                d_model_matrices, d_output, d_zbuffer, width, height, num_objects);
 
-    rasterize_kernel<<<grid_size, block_size>>>(d_projected_vertices, d_all_triangles, d_triangle_counts, 
-                                                d_all_textures, d_tex_widths, d_tex_heights, 
-                                                d_model_matrices, d_output, d_zbuffer, width, height, 2);
-
-    // Copy result back to host
+    // Copy result back to host and save
     unsigned char* output = new unsigned char[width * height * 3];
     CHECK_CUDA(cudaMemcpy(output, d_output, width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
-
-    // Save output image
     stbi_write_png("output.png", width, height, 3, output, width * 3);
 
     // Clean up
     delete[] output;
-    stbi_image_free(african_head_texture);
-    stbi_image_free(drone_texture);
-    CHECK_CUDA(cudaFree(d_all_triangles));
-    CHECK_CUDA(cudaFree(d_all_textures));
-    CHECK_CUDA(cudaFree(d_triangle_counts));
-    CHECK_CUDA(cudaFree(d_tex_widths));
-    CHECK_CUDA(cudaFree(d_tex_heights));
-    CHECK_CUDA(cudaFree(d_model_matrices));
-    CHECK_CUDA(cudaFree(d_projected_vertices));
-    CHECK_CUDA(cudaFree(d_output));
-    CHECK_CUDA(cudaFree(d_zbuffer));
+    for (int i = 0; i < num_objects; i++) stbi_image_free(textures[i]);
+    cudaFree(d_triangles);
+    cudaFree(d_textures);
+    cudaFree(d_triangle_counts);
+    cudaFree(d_tex_widths);
+    cudaFree(d_tex_heights);
+    cudaFree(d_model_matrices);
+    cudaFree(d_projected_vertices);
+    cudaFree(d_output);
+    cudaFree(d_zbuffer);
 
     return 0;
 }
