@@ -32,6 +32,10 @@ struct Vec3f {
 
 struct Vec2f {
     float u, v;
+    __host__ __device__ Vec2f() : u(0), v(0) {}
+    __host__ __device__ Vec2f(float u, float v) : u(u), v(v) {}
+    __host__ __device__ Vec2f operator*(float f) const { return Vec2f(u * f, v * f); }
+    __host__ __device__ Vec2f operator+(const Vec2f& other) const { return Vec2f(u + other.u, v + other.v); }
 };
 
 struct Triangle {
@@ -64,16 +68,6 @@ struct Mat4f {
         return Vec3f(x, y, z).normalize();
     }
 };
-
-struct Object {
-    Triangle* triangles;
-    int num_triangles;
-    unsigned char* texture;
-    int tex_width;
-    int tex_height;
-    Mat4f model_matrix;
-};
-
 
 __device__ Vec3f barycentric(Vec3f A, Vec3f B, Vec3f C, Vec3f P) {
     Vec3f s[2];
@@ -116,8 +110,7 @@ __global__ void rasterize_kernel(Vec3f* projected_vertices, Triangle* triangles,
     zbuffer[idx] = FLT_MAX;
 
     Vec3f color(0.2f, 0.2f, 0.2f); // Ambient light
-    Vec3f light_dir = Vec3f(1, 1, 1).normalize();  // Light direction
-
+    Vec3f light_dir = Vec3f(1, 1, 1).normalize();
     Vec3f P(x, flipped_y, 0);
 
     int vertex_offset = 0;
@@ -145,17 +138,12 @@ __global__ void rasterize_kernel(Vec3f* projected_vertices, Triangle* triangles,
             if (frag_depth < zbuffer[idx]) {
                 zbuffer[idx] = frag_depth;
 
-                float tex_u = bc_screen.x * tri.uv[0].u + bc_screen.y * tri.uv[1].u + bc_screen.z * tri.uv[2].u;
-                float tex_v = bc_screen.x * tri.uv[0].v + bc_screen.y * tri.uv[1].v + bc_screen.z * tri.uv[2].v;
+                Vec2f uv = tri.uv[0] * bc_screen.x + tri.uv[1] * bc_screen.y + tri.uv[2] * bc_screen.z;
+                int tex_x = uv.u * tex_widths[obj];
+                int tex_y = (1.0f - uv.v) * tex_heights[obj];
 
-                int tex_x = tex_u * tex_widths[obj];
-                int tex_y = (1.0f - tex_v) * tex_heights[obj];
-
-                Vec3f tex_color;
                 int tex_idx = texture_offset + (tex_y * tex_widths[obj] + tex_x) * 3;
-                tex_color.x = textures[tex_idx + 0] / 255.0f;
-                tex_color.y = textures[tex_idx + 1] / 255.0f;
-                tex_color.z = textures[tex_idx + 2] / 255.0f;
+                Vec3f tex_color(textures[tex_idx] / 255.0f, textures[tex_idx + 1] / 255.0f, textures[tex_idx + 2] / 255.0f);
 
                 Vec3f normal = (tri.n[0] * bc_screen.x + tri.n[1] * bc_screen.y + tri.n[2] * bc_screen.z).normalize();
                 normal = model_matrices[obj].transformNormal(normal);
