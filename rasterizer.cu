@@ -124,11 +124,7 @@ __global__ void rasterize_kernel(Vec3f* projected_vertices, Triangle* triangles,
             Vec3f screen_coords[3];
             for (int j = 0; j < 3; j++) {
                 Vec3f v = projected_vertices[vertex_offset + i*3 + j];
-                screen_coords[j] = Vec3f(
-                    (v.x / v.z + 1.0f) * width / 2.0f,
-                    height - 1 - (v.y / v.z + 1.0f) * height / 2.0f,
-                    v.z
-                );
+                screen_coords[j] = Vec3f((v.x + 1.0f) * width / 2.0f, (1.0f - v.y) * height / 2.0f, v.z);
             }
 
             Vec3f bc_screen = barycentric(screen_coords[0], screen_coords[1], screen_coords[2], P);
