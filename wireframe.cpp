@@ -45,15 +45,24 @@ void line(int x0, int y0, int x1, int y1, TGAImage &image, const TGAColor &color
     }
 }
 
-int main(int argc, char** argv) {
-    TGAImage image(width, height, TGAImage::RGB);
-    
-    std::vector<Vec3f> verts;
-    std::vector<std::vector<int>> faces;
+void draw_wireframe(const std::vector<Vec3f>& verts, const std::vector<std::vector<int>>& faces, TGAImage& image, const TGAColor& color) {
+    for (const auto& face : faces) {
+        for (int j = 0; j < 3; j++) {
+            Vec3f v0 = verts[face[j]];
+            Vec3f v1 = verts[face[(j+1)%3]];
+            int x0 = (v0.x+1.)*width/2.;
+            int y0 = (v0.y+1.)*height/2.;
+            int x1 = (v1.x+1.)*width/2.;
+            int y1 = (v1.y+1.)*height/2.;
+            line(x0, y0, x1, y1, image, color);
+        }
+    }
+}
 
+bool load_obj(const std::string& filename, std::vector<Vec3f>& verts, std::vector<std::vector<int>>& faces) {
     std::ifstream in;
-    in.open("african_head.obj", std::ifstream::in);
-    if (in.fail()) return 1;
+    in.open(filename, std::ifstream::in);
+    if (in.fail()) return false;
     std::string line_str;
     while (std::getline(in, line_str)) {
         std::istringstream iss(line_str);
@@ -75,19 +84,21 @@ int main(int argc, char** argv) {
         }
     }
     std::cerr << "# v# " << verts.size() << " f# "  << faces.size() << std::endl;
+    return true;
+}
 
-    for (int i=0; i<faces.size(); i++) {
-        std::vector<int> face = faces[i];
-        for (int j=0; j<3; j++) {
-            Vec3f v0 = verts[face[j]];
-            Vec3f v1 = verts[face[(j+1)%3]];
-            int x0 = (v0.x+1.)*width/2.;
-            int y0 = (v0.y+1.)*height/2.;
-            int x1 = (v1.x+1.)*width/2.;
-            int y1 = (v1.y+1.)*height/2.;
-            line(x0, y0, x1, y1, image, white);
-        }
+int main(int argc, char** argv) {
+    TGAImage image(width, height, TGAImage::RGB);
+    
+    std::vector<Vec3f> verts;
+    std::vector<std::vector<int>> faces;
+
+    if (!load_obj("african_head.obj", verts, faces)) {
+        std::cerr << "Failed to load OBJ file" << std::endl;
+        return 1;
     }
+
+    draw_wireframe(verts, faces, image, white);
 
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
