@@ -13,6 +13,9 @@ const int height = 800;
 struct Vec3f {
     float x, y, z;
     Vec3f(float x = 0, float y = 0, float z = 0) : x(x), y(y), z(z) {}
+    
+    Vec3f operator+(const Vec3f& v) const { return Vec3f(x + v.x, y + v.y, z + v.z); }
+    Vec3f operator-(const Vec3f& v) const { return Vec3f(x - v.x, y - v.y, z - v.z); }
 };
 
 void drawLine(int x0, int y0, int x1, int y1, TGAImage &image, const TGAColor &color) {
@@ -46,16 +49,35 @@ void drawLine(int x0, int y0, int x1, int y1, TGAImage &image, const TGAColor &c
     }
 }
 
-void drawWireframe(const std::vector<Vec3f>& verts, const std::vector<std::vector<int>>& faces, TGAImage& image, const TGAColor& color) {
+Vec3f perspectiveProject(const Vec3f& v, float fov, float aspect, float near, float far) {
+    float fovRad = fov * M_PI / 180.0f;
+    float tanHalfFov = std::tan(fovRad / 2.0f);
+    
+    float x = v.x / (v.z * tanHalfFov);
+    float y = v.y / (v.z * tanHalfFov * aspect);
+    float z = (v.z - near) / (far - near);
+    
+    return Vec3f(x, y, z);
+}
+
+void drawWireframe(const std::vector<Vec3f>& verts, const std::vector<std::vector<int>>& faces, 
+                   TGAImage& image, const TGAColor& color, const Vec3f& position, 
+                   float fov, float aspect, float near, float far) {
     for (const auto& face : faces) {
         for (int j = 0; j < 3; j++) {
-            Vec3f v0 = verts[face[j]];
-            Vec3f v1 = verts[face[(j + 1) % 3]];
+            Vec3f v0 = verts[face[j]] - position;
+            Vec3f v1 = verts[face[(j + 1) % 3]] - position;
 
+            // Apply perspective projection
+            v0 = perspectiveProject(v0, fov, aspect, near, far);
+            v1 = perspectiveProject(v1, fov, aspect, near, far);
+
+            // Convert to screen coordinates
             int x0 = (v0.x + 1.0f) * width / 2.0f;
             int y0 = (v0.y + 1.0f) * height / 2.0f;
             int x1 = (v1.x + 1.0f) * width / 2.0f;
             int y1 = (v1.y + 1.0f) * height / 2.0f;
+
             drawLine(x0, y0, x1, y1, image, color);
         }
     }
@@ -99,9 +121,18 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    drawWireframe(vertices, faces, image, white);
+    // Set the position of the wireframe in 3D space
+    Vec3f position(0, 0, 3);  // Position the wireframe 3 units away from the origin
 
-    image.flip_vertically();
+    // Set up perspective projection parameters
+    float fov = 60.0f;  // Field of view in degrees
+    float aspect = (float)width / (float)height;
+    float near = 0.1f;
+    float far = 100.0f;
+
+    drawWireframe(vertices, faces, image, white, position, fov, aspect, near, far);
+
+
     image.write_tga_file("output.tga");
     return 0;
 }
