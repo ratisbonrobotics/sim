@@ -16,6 +16,23 @@ struct Vec3f {
     
     Vec3f operator+(const Vec3f& v) const { return Vec3f(x + v.x, y + v.y, z + v.z); }
     Vec3f operator-(const Vec3f& v) const { return Vec3f(x - v.x, y - v.y, z - v.z); }
+
+    Vec3f rotate(float pitch, float yaw, float roll) const {
+        // Yaw rotation (around Y-axis)
+        float cy = cos(yaw);
+        float sy = sin(yaw);
+        Vec3f yawed(cy * x + sy * z, y, -sy * x + cy * z);
+
+        // Pitch rotation (around X-axis)
+        float cp = cos(pitch);
+        float sp = sin(pitch);
+        Vec3f pitched(yawed.x, cp * yawed.y - sp * yawed.z, sp * yawed.y + cp * yawed.z);
+
+        // Roll rotation (around Z-axis)
+        float cr = cos(roll);
+        float sr = sin(roll);
+        return Vec3f(cr * pitched.x - sr * pitched.y, sr * pitched.x + cr * pitched.y, pitched.z);
+    }
 };
 
 void drawLine(int x0, int y0, int x1, int y1, TGAImage &image, const TGAColor &color) {
@@ -62,11 +79,12 @@ Vec3f perspectiveProject(const Vec3f& v, float fov, float aspect, float near, fl
 
 void drawWireframe(const std::vector<Vec3f>& verts, const std::vector<std::vector<int>>& faces, 
                    TGAImage& image, const TGAColor& color, const Vec3f& position, 
+                   float pitch, float yaw, float roll,
                    float fov, float aspect, float near, float far) {
     for (const auto& face : faces) {
         for (int j = 0; j < 3; j++) {
-            Vec3f v0 = verts[face[j]] - position;
-            Vec3f v1 = verts[face[(j + 1) % 3]] - position;
+            Vec3f v0 = verts[face[j]].rotate(pitch, yaw, roll) - position;
+            Vec3f v1 = verts[face[(j + 1) % 3]].rotate(pitch, yaw, roll) - position;
 
             // Apply perspective projection
             v0 = perspectiveProject(v0, fov, aspect, near, far);
@@ -130,8 +148,12 @@ int main(int argc, char** argv) {
     float near = 0.1f;
     float far = 100.0f;
 
-    drawWireframe(vertices, faces, image, white, position, fov, aspect, near, far);
+    // Set up rotation angles (in radians)
+    float pitch = 0.0f;  // Rotation around X-axis
+    float yaw = M_PI / 4;  // Rotation around Y-axis (45 degrees)
+    float roll = 0.0f;  // Rotation around Z-axis
 
+    drawWireframe(vertices, faces, image, white, position, pitch, yaw, roll, fov, aspect, near, far);
 
     image.write_tga_file("output.tga");
     return 0;
