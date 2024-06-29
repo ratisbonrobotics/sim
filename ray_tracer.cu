@@ -233,8 +233,8 @@ int main() {
     // Create model matrix for translation and rotation
     Mat4f model_matrix;
     // Translate the model
-    model_matrix.m[0][3] = 0.0f;  // Move 0.5 units along x-axis
-    model_matrix.m[1][3] = 0.0f; // Move -0.2 units along y-axis
+    model_matrix.m[0][3] = 0.0f;  // Move 0 units along x-axis
+    model_matrix.m[1][3] = 0.0f; // Move 0 units along y-axis
     model_matrix.m[2][3] = -3.0f;  // No movement along z-axis
 
     // Rotate the model (example: rotate 45 degrees around y-axis)
