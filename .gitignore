@@ -168,3 +168,4 @@ output*.png
 *.out
 .vscode/
 *.tga
+*.ppm
