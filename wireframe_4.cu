@@ -91,12 +91,22 @@ __device__ void drawLine(int x0, int y0, int x1, int y1, unsigned char* image, i
 __global__ void drawWireframeKernel(Vec3f* verts, int* faces, int numFaces, unsigned char* image,
                                     Vec3f position, float pitch, float yaw, float roll,
                                     float fov, float aspect, float near, float far, int width, int height) {
+    extern __shared__ int sharedFaces[];
+
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= numFaces) return;
 
+    // Load face indices into shared memory
+    if (threadIdx.x < blockDim.x) {
+        for (int j = 0; j < 3; j++) {
+            sharedFaces[threadIdx.x * 3 + j] = faces[idx * 3 + j];
+        }
+    }
+    __syncthreads();
+
     for (int j = 0; j < 3; j++) {
-        Vec3f v0 = verts[faces[idx * 3 + j]].rotate(pitch, yaw, roll) - position;
-        Vec3f v1 = verts[faces[idx * 3 + (j + 1) % 3]].rotate(pitch, yaw, roll) - position;
+        Vec3f v0 = verts[sharedFaces[threadIdx.x * 3 + j]].rotate(pitch, yaw, roll) - position;
+        Vec3f v1 = verts[sharedFaces[threadIdx.x * 3 + (j + 1) % 3]].rotate(pitch, yaw, roll) - position;
 
         v0 = perspectiveProject(v0, fov, aspect, near, far);
         v1 = perspectiveProject(v1, fov, aspect, near, far);
@@ -170,8 +180,9 @@ int main(int argc, char** argv) {
     int numFaces = faces.size() / 3;
     int threadsPerBlock = 256;
     int numBlocks = (numFaces + threadsPerBlock - 1) / threadsPerBlock;
+    int sharedMemSize = threadsPerBlock * 3 * sizeof(int);
 
-    drawWireframeKernel<<<numBlocks, threadsPerBlock>>>(d_verts, d_faces, numFaces, d_image,
+    drawWireframeKernel<<<numBlocks, threadsPerBlock, sharedMemSize>>>(d_verts, d_faces, numFaces, d_image,
                                                         position, pitch, yaw, roll,
                                                         fov, aspect, near, far, width, height);
     cudaDeviceSynchronize();
