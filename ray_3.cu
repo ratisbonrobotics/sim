@@ -114,56 +114,62 @@ __global__ void render(Vec3* fb, int width, int height, int samples, Sphere* sph
 }
 
 int main() {
-    int width = 800;
-    int height = 400;
+    int width = 100;
+    int height = 50;
     int samples = 4;
     int sphere_count = 2;
-    int num_renders = 5;  // Number of parallel renders
 
-    Vec3* fb;
-    CHECK_CUDA(cudaMallocManaged(&fb, num_renders * width * height * sizeof(Vec3)));
+    // Array of scene counts to test
+    int scene_counts[] = {2, 4, 8, 16, 32, 64, 128, 256, 512};
+    int num_tests = sizeof(scene_counts) / sizeof(scene_counts[0]);
 
-    Sphere* spheres;
-    CHECK_CUDA(cudaMallocManaged(&spheres, num_renders * sphere_count * sizeof(Sphere)));
+    for (int test = 0; test < num_tests; test++) {
+        int num_renders = scene_counts[test];
 
-    srand(time(NULL));
-    for (int r = 0; r < num_renders; r++) {
-        float x = (float)rand() / RAND_MAX * 2 - 1;  // Random x between -1 and 1
-        float y = (float)rand() / RAND_MAX * 2 - 1;  // Random y between -1 and 1
-        spheres[r * sphere_count] = Sphere(Vec3(x, y, -1), 0.5f, Vec3(0.7f, 0.3f, 0.3f));
-        spheres[r * sphere_count + 1] = Sphere(Vec3(0, -100.5f, -1), 100.0f, Vec3(0.3f, 0.7f, 0.3f));
-    }
+        Vec3* fb;
+        CHECK_CUDA(cudaMallocManaged(&fb, num_renders * width * height * sizeof(Vec3)));
 
-    curandState* rand_state;
-    CHECK_CUDA(cudaMalloc(&rand_state, num_renders * width * height * sizeof(curandState)));
+        Sphere* spheres;
+        CHECK_CUDA(cudaMallocManaged(&spheres, num_renders * sphere_count * sizeof(Sphere)));
 
-    dim3 blocks(width/16+1, height/16+1, num_renders);
-    dim3 threads(16, 16);
-
-    render<<<blocks, threads>>>(fb, width, height, samples, spheres, sphere_count, rand_state);
-    CHECK_CUDA(cudaGetLastError());
-    CHECK_CUDA(cudaDeviceSynchronize());
-
-    for (int r = 0; r < num_renders; r++) {
-        char filename[20];
-        snprintf(filename, sizeof(filename), "out%d.ppm", r+1);
-        FILE* f = fopen(filename, "w");
-        fprintf(f, "P3\n%d %d\n255\n", width, height);
-        for (int j = height - 1; j >= 0; j--) {
-            for (int i = 0; i < width; i++) {
-                size_t pixel_index = (r * width * height) + (j * width + i);
-                int ir = int(255.99 * fb[pixel_index].x);
-                int ig = int(255.99 * fb[pixel_index].y);
-                int ib = int(255.99 * fb[pixel_index].z);
-                fprintf(f, "%d %d %d\n", ir, ig, ib);
-            }
+        srand(time(NULL));
+        for (int r = 0; r < num_renders; r++) {
+            float x = (float)rand() / RAND_MAX * 2 - 1;  // Random x between -1 and 1
+            float y = (float)rand() / RAND_MAX * 2 - 1;  // Random y between -1 and 1
+            spheres[r * sphere_count] = Sphere(Vec3(x, y, -1), 0.5f, Vec3(0.7f, 0.3f, 0.3f));
+            spheres[r * sphere_count + 1] = Sphere(Vec3(0, -100.5f, -1), 100.0f, Vec3(0.3f, 0.7f, 0.3f));
         }
-        fclose(f);
-    }
 
-    CHECK_CUDA(cudaFree(fb));
-    CHECK_CUDA(cudaFree(spheres));
-    CHECK_CUDA(cudaFree(rand_state));
+        curandState* rand_state;
+        CHECK_CUDA(cudaMalloc(&rand_state, num_renders * width * height * sizeof(curandState)));
+
+        dim3 blocks(width/16+1, height/16+1, num_renders);
+        dim3 threads(16, 16);
+
+        // Measure execution time
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+
+        cudaEventRecord(start);
+        render<<<blocks, threads>>>(fb, width, height, samples, spheres, sphere_count, rand_state);
+        CHECK_CUDA(cudaGetLastError());
+        CHECK_CUDA(cudaDeviceSynchronize());
+        cudaEventRecord(stop);
+
+        cudaEventSynchronize(stop);
+        float milliseconds = 0;
+        cudaEventElapsedTime(&milliseconds, start, stop);
+
+        printf("Number of scenes: %d, Execution time: %.2f ms\n", num_renders, milliseconds);
+
+        CHECK_CUDA(cudaFree(fb));
+        CHECK_CUDA(cudaFree(spheres));
+        CHECK_CUDA(cudaFree(rand_state));
+
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+    }
 
     return 0;
 }
