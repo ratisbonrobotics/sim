@@ -2,6 +2,7 @@
 #include <curand_kernel.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define CHECK_CUDA(call) { \
     cudaError_t err = call; \
@@ -71,17 +72,16 @@ __device__ Vec3 color(const Ray& ray, Sphere* spheres, int sphere_count) {
         Vec3 light_dir = Vec3(1, 1, -1).normalize();
         float diffuse = fmaxf(0.0f, dot(normal, light_dir));
         
-        // Simple shadow check
         Ray shadow_ray(hit_point + normal * 0.001f, light_dir);
         for (int i = 0; i < sphere_count; i++) {
             float t;
             if (spheres[i].intersect(shadow_ray, t)) {
-                diffuse *= 0.5f; // Soften shadows
+                diffuse *= 0.5f;
                 break;
             }
         }
         
-        return hit_sphere->color * (diffuse * 0.7f + 0.2f); // Add some ambient light
+        return hit_sphere->color * (diffuse * 0.7f + 0.2f);
     }
 
     Vec3 unit_direction = ray.direction.normalize();
@@ -92,8 +92,9 @@ __device__ Vec3 color(const Ray& ray, Sphere* spheres, int sphere_count) {
 __global__ void render(Vec3* fb, int width, int height, int samples, Sphere* spheres, int sphere_count, curandState* rand_state) {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     int j = threadIdx.y + blockIdx.y * blockDim.y;
+    int render_index = blockIdx.z;
     if ((i >= width) || (j >= height)) return;
-    int pixel_index = j * width + i;
+    int pixel_index = (render_index * width * height) + (j * width + i);
     curandState local_rand_state = rand_state[pixel_index];
 
     Vec3 lower_left_corner(-2.0f, -1.0f, -1.0f);
@@ -106,7 +107,7 @@ __global__ void render(Vec3* fb, int width, int height, int samples, Sphere* sph
         float u = float(i + curand_uniform(&local_rand_state)) / float(width);
         float v = float(j + curand_uniform(&local_rand_state)) / float(height);
         Ray r(origin, lower_left_corner + horizontal * u + vertical * v);
-        col = col + color(r, spheres, sphere_count);
+        col = col + color(r, spheres + render_index * sphere_count, sphere_count);
     }
     col = col * (1.0f / float(samples));
     fb[pixel_index] = col;
@@ -117,34 +118,47 @@ int main() {
     int height = 400;
     int samples = 4;
     int sphere_count = 2;
+    int num_renders = 5;  // Number of parallel renders
 
     Vec3* fb;
-    CHECK_CUDA(cudaMallocManaged(&fb, width * height * sizeof(Vec3)));
+    CHECK_CUDA(cudaMallocManaged(&fb, num_renders * width * height * sizeof(Vec3)));
 
     Sphere* spheres;
-    CHECK_CUDA(cudaMallocManaged(&spheres, sphere_count * sizeof(Sphere)));
-    spheres[0] = Sphere(Vec3(0, 0, -1), 0.5f, Vec3(0.7f, 0.3f, 0.3f));
-    spheres[1] = Sphere(Vec3(0, -100.5f, -1), 100.0f, Vec3(0.3f, 0.7f, 0.3f));
+    CHECK_CUDA(cudaMallocManaged(&spheres, num_renders * sphere_count * sizeof(Sphere)));
+
+    srand(time(NULL));
+    for (int r = 0; r < num_renders; r++) {
+        float x = (float)rand() / RAND_MAX * 2 - 1;  // Random x between -1 and 1
+        float y = (float)rand() / RAND_MAX * 2 - 1;  // Random y between -1 and 1
+        spheres[r * sphere_count] = Sphere(Vec3(x, y, -1), 0.5f, Vec3(0.7f, 0.3f, 0.3f));
+        spheres[r * sphere_count + 1] = Sphere(Vec3(0, -100.5f, -1), 100.0f, Vec3(0.3f, 0.7f, 0.3f));
+    }
 
     curandState* rand_state;
-    CHECK_CUDA(cudaMalloc(&rand_state, width * height * sizeof(curandState)));
+    CHECK_CUDA(cudaMalloc(&rand_state, num_renders * width * height * sizeof(curandState)));
 
-    dim3 blocks(width/16+1, height/16+1);
+    dim3 blocks(width/16+1, height/16+1, num_renders);
     dim3 threads(16, 16);
 
     render<<<blocks, threads>>>(fb, width, height, samples, spheres, sphere_count, rand_state);
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
 
-    printf("P3\n%d %d\n255\n", width, height);
-    for (int j = height - 1; j >= 0; j--) {
-        for (int i = 0; i < width; i++) {
-            size_t pixel_index = j * width + i;
-            int ir = int(255.99 * fb[pixel_index].x);
-            int ig = int(255.99 * fb[pixel_index].y);
-            int ib = int(255.99 * fb[pixel_index].z);
-            printf("%d %d %d\n", ir, ig, ib);
+    for (int r = 0; r < num_renders; r++) {
+        char filename[20];
+        snprintf(filename, sizeof(filename), "out%d.ppm", r+1);
+        FILE* f = fopen(filename, "w");
+        fprintf(f, "P3\n%d %d\n255\n", width, height);
+        for (int j = height - 1; j >= 0; j--) {
+            for (int i = 0; i < width; i++) {
+                size_t pixel_index = (r * width * height) + (j * width + i);
+                int ir = int(255.99 * fb[pixel_index].x);
+                int ig = int(255.99 * fb[pixel_index].y);
+                int ib = int(255.99 * fb[pixel_index].z);
+                fprintf(f, "%d %d %d\n", ir, ig, ib);
+            }
         }
+        fclose(f);
     }
 
     CHECK_CUDA(cudaFree(fb));
