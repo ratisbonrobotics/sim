@@ -29,7 +29,6 @@ struct Vec3f {
     __host__ __device__ const float& operator[](int i) const { return i == 0 ? x : (i == 1 ? y : z); }
 };
 
-
 struct Vec2f {
     float u, v;
     __host__ __device__ Vec2f() : u(0), v(0) {}
@@ -41,7 +40,7 @@ struct Vec2f {
 struct Triangle {
     Vec3f v[3];
     Vec2f uv[3];
-    Vec3f n[3];  // Vertex normals
+    Vec3f n[3];
 };
 
 struct Mat4f {
@@ -80,20 +79,6 @@ __device__ Vec3f barycentric(Vec3f A, Vec3f B, Vec3f C, Vec3f P) {
     if (std::abs(u.z) > 1e-2)
         return Vec3f(1.f - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
     return Vec3f(-1, 1, 1);
-}
-
-__host__ __device__ Mat4f perspective(float fov, float aspect, float near, float far) {
-    Mat4f result;
-    float tanHalfFov = tan(fov / 2.0f);
-    
-    result.m[0][0] = 1.0f / (aspect * tanHalfFov);
-    result.m[1][1] = 1.0f / tanHalfFov;
-    result.m[2][2] = -(far + near) / (far - near);
-    result.m[2][3] = -2.0f * far * near / (far - near);
-    result.m[3][2] = -1.0f;
-    result.m[3][3] = 0.0f;
-    
-    return result;
 }
 
 __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts, 
@@ -219,6 +204,20 @@ Mat4f create_model_matrix(float tx, float ty, float tz, float scale = 1.0f, floa
     return matrix;
 }
 
+Mat4f create_perspective_matrix(float fov, float aspect, float near, float far) {
+    Mat4f result;
+    float tanHalfFov = tan(fov / 2.0f);
+    
+    result.m[0][0] = 1.0f / (aspect * tanHalfFov);
+    result.m[1][1] = 1.0f / tanHalfFov;
+    result.m[2][2] = -(far + near) / (far - near);
+    result.m[2][3] = -2.0f * far * near / (far - near);
+    result.m[3][2] = -1.0f;
+    result.m[3][3] = 0.0f;
+    
+    return result;
+}
+
 int main() {
     const int width = 340, height = 280;
     const int num_objects = 2;
@@ -241,7 +240,7 @@ int main() {
     };
 
     // Prepare projection matrix
-    Mat4f proj = perspective(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
+    Mat4f proj = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
 
     // Project vertices and transform normals directly in the triangles
     for (int i = 0; i < num_objects; i++) {
