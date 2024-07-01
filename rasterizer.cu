@@ -98,7 +98,7 @@ __host__ __device__ Mat4f perspective(float fov, float aspect, float near, float
 
 __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts, 
                                  unsigned char* textures, int* tex_widths, int* tex_heights, 
-                                 Mat4f* model_matrices, unsigned char* output, float* zbuffer, 
+                                 unsigned char* output, float* zbuffer, 
                                  int width, int height, int num_objects) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -141,7 +141,6 @@ __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts,
                 Vec3f tex_color(textures[tex_idx] / 255.0f, textures[tex_idx + 1] / 255.0f, textures[tex_idx + 2] / 255.0f);
 
                 Vec3f normal = (tri.n[0] * bc_screen.x + tri.n[1] * bc_screen.y + tri.n[2] * bc_screen.z).normalize();
-                normal = model_matrices[obj].transformNormal(normal);
 
                 float diffuse = max(0.0f, normal.dot(light_dir));
                 color = tex_color * (0.3f + 0.7f * diffuse);
@@ -244,11 +243,12 @@ int main() {
     // Prepare projection matrix
     Mat4f proj = perspective(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
 
-    // Project vertices directly in the triangles
+    // Project vertices and transform normals directly in the triangles
     for (int i = 0; i < num_objects; i++) {
         for (auto& tri : triangles[i]) {
             for (int j = 0; j < 3; j++) {
                 tri.v[j] = proj.transform(model_matrices[i].transform(tri.v[j]));
+                tri.n[j] = model_matrices[i].transformNormal(tri.n[j]);
             }
         }
     }
@@ -257,7 +257,6 @@ int main() {
     Triangle* d_triangles;
     unsigned char* d_textures;
     int* d_triangle_counts, *d_tex_widths, *d_tex_heights;
-    Mat4f* d_model_matrices;
     unsigned char* d_output;
     float* d_zbuffer;
 
@@ -270,7 +269,6 @@ int main() {
     CHECK_CUDA(cudaMalloc(&d_triangle_counts, num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_tex_widths, num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_tex_heights, num_objects * sizeof(int)));
-    CHECK_CUDA(cudaMalloc(&d_model_matrices, num_objects * sizeof(Mat4f)));
     CHECK_CUDA(cudaMalloc(&d_output, width * height * 3 * sizeof(unsigned char)));
     CHECK_CUDA(cudaMalloc(&d_zbuffer, width * height * sizeof(float)));
 
@@ -287,7 +285,6 @@ int main() {
     CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts, num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths, num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights, num_objects * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_objects * sizeof(Mat4f), cudaMemcpyHostToDevice));
 
     // Launch kernel
     dim3 block_size(16, 16);
@@ -295,7 +292,7 @@ int main() {
 
     rasterize_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_counts, 
                                                 d_textures, d_tex_widths, d_tex_heights, 
-                                                d_model_matrices, d_output, d_zbuffer, width, height, num_objects);
+                                                d_output, d_zbuffer, width, height, num_objects);
 
     // Copy result back to host and save
     unsigned char* output = new unsigned char[width * height * 3];
@@ -310,7 +307,6 @@ int main() {
     cudaFree(d_triangle_counts);
     cudaFree(d_tex_widths);
     cudaFree(d_tex_heights);
-    cudaFree(d_model_matrices);
     cudaFree(d_output);
     cudaFree(d_zbuffer);
 
