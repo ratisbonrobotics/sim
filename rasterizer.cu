@@ -200,6 +200,28 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
     }
 }
 
+Mat4f create_model_matrix(float tx, float ty, float tz, float scale = 1.0f, float rotation = 0.0f) {
+    Mat4f matrix;
+    
+    // Scale
+    matrix.m[0][0] = matrix.m[1][1] = matrix.m[2][2] = scale;
+    
+    // Rotation (around Y-axis)
+    float cos_r = cos(rotation);
+    float sin_r = sin(rotation);
+    matrix.m[0][0] = cos_r * scale;
+    matrix.m[0][2] = -sin_r * scale;
+    matrix.m[2][0] = sin_r * scale;
+    matrix.m[2][2] = cos_r * scale;
+    
+    // Translation
+    matrix.m[0][3] = tx;
+    matrix.m[1][3] = ty;
+    matrix.m[2][3] = tz;
+    
+    return matrix;
+}
+
 int main() {
     const int width = 340, height = 280;
     const int num_objects = 2;
@@ -215,31 +237,11 @@ int main() {
     textures[0] = stbi_load("african_head_diffuse.tga", &tex_widths[0], &tex_heights[0], nullptr, 3);
     textures[1] = stbi_load("drone.png", &tex_widths[1], &tex_heights[1], nullptr, 3);
     
-    for (int i = 0; i < num_objects; i++) {
-        if (!textures[i]) {
-            printf("Failed to load texture for object %d\n", i);
-            return 1;
-        }
-    }
-
     // Prepare model matrices
     Mat4f model_matrices[num_objects] = {
-        Mat4f(), // African head
-        Mat4f()  // Drone
+        create_model_matrix(-1.0f, 0.0f, -3.0f, 1.0f, 3.14159f * 1.75f), // African head
+        create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f)  // Drone
     };
-    
-    // African head transformation
-    model_matrices[0].m[0][3] = -1.0f;
-    model_matrices[0].m[2][3] = -3.0f;
-    float angle = 3.14159f / 4.0f;
-    model_matrices[0].m[0][0] = model_matrices[0].m[2][2] = cos(angle);
-    model_matrices[0].m[0][2] = -(model_matrices[0].m[2][0] = -sin(angle));
-
-    // Drone transformation
-    model_matrices[1].m[0][3] = 1.0f;
-    model_matrices[1].m[1][3] = 0.5f;
-    model_matrices[1].m[2][3] = -2.5f;
-    model_matrices[1].m[0][0] = model_matrices[1].m[1][1] = model_matrices[1].m[2][2] = 0.1f;
 
     // Prepare projection matrix
     Mat4f proj = perspective(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
