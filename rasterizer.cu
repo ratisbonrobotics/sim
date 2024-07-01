@@ -201,7 +201,7 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
 }
 
 int main() {
-    const int width = 640, height = 480;
+    const int width = 340, height = 280;
     const int num_objects = 2;
     
     // Load objects and textures
@@ -297,35 +297,9 @@ int main() {
     dim3 block_size(16, 16);
     dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
 
-    const int num_runs = 100; // Number of times to run the kernel
-    float total_time = 0.0f;
-
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-
-    for (int run = 0; run < num_runs; ++run) {
-        cudaEventRecord(start);
-
-        rasterize_kernel<<<grid_size, block_size>>>(d_projected_vertices, d_triangles, d_triangle_counts, 
-                                                    d_textures, d_tex_widths, d_tex_heights, 
-                                                    d_model_matrices, d_output, d_zbuffer, width, height, num_objects);
-
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
-
-        float milliseconds = 0;
-        cudaEventElapsedTime(&milliseconds, start, stop);
-        total_time += milliseconds;
-
-        printf("Run %d: %.2f ms\n", run + 1, milliseconds);
-    }
-
-    float average_time = total_time / num_runs;
-    printf("Average kernel execution time: %.2f ms\n", average_time);
-
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+    rasterize_kernel<<<grid_size, block_size>>>(d_projected_vertices, d_triangles, d_triangle_counts, 
+                                                d_textures, d_tex_widths, d_tex_heights, 
+                                                d_model_matrices, d_output, d_zbuffer, width, height, num_objects);
 
     // Copy result back to host and save
     unsigned char* output = new unsigned char[width * height * 3];
