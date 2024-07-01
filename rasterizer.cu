@@ -81,6 +81,27 @@ struct Mat4f {
     }
 };
 
+__global__ void project_vertices_kernel(Triangle* triangles, int* triangle_counts, 
+                                        Mat4f* model_matrices, Mat4f vp, int num_objects) {
+    int obj_idx = blockIdx.x;
+    int tri_idx = threadIdx.x + blockDim.x * blockIdx.y;
+
+    if (obj_idx >= num_objects || tri_idx >= triangle_counts[obj_idx]) return;
+
+    int triangle_offset = 0;
+    for (int i = 0; i < obj_idx; i++) {
+        triangle_offset += triangle_counts[i];
+    }
+
+    Triangle& tri = triangles[triangle_offset + tri_idx];
+    Mat4f mvp = vp * model_matrices[obj_idx];
+
+    for (int j = 0; j < 3; j++) {
+        tri.v[j] = mvp.multiplyPoint(tri.v[j]);
+        tri.n[j] = model_matrices[obj_idx].multiplyVector(tri.n[j]).normalize();
+    }
+}
+
 __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts, 
                                  unsigned char* textures, int* tex_widths, int* tex_heights, 
                                  unsigned char* output, float* zbuffer, 
@@ -271,20 +292,8 @@ int main() {
         create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f)  // Drone
     };
 
-    Mat4f proj = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
-    Mat4f view = create_view_matrix(Vec3f(0, 0, 1), Vec3f(0, 0, 0), Vec3f(0, 1, 0));
-
-    // Project vertices and normals
-    Mat4f vp = proj * view;
-    for (int i = 0; i < num_objects; i++) {
-        Mat4f mvp = vp * model_matrices[i];
-        for (auto& tri : triangles[i]) {
-            for (int j = 0; j < 3; j++) {
-                tri.v[j] = mvp.multiplyPoint(tri.v[j]);
-                tri.n[j] = model_matrices[i].multiplyVector(tri.n[j]).normalize();
-            }
-        }
-    }
+    Mat4f* d_model_matrices;
+    Mat4f vp = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f) * create_view_matrix(Vec3f(0, 0, 1), Vec3f(0, 0, 0), Vec3f(0, 1, 0));
 
     // Prepare GPU data
     Triangle* d_triangles;
@@ -298,6 +307,7 @@ int main() {
     int triangle_counts[num_objects] = {(int)triangles[0].size(), (int)triangles[1].size()};
 
     // Allocate GPU memory
+    CHECK_CUDA(cudaMalloc(&d_model_matrices, num_objects * sizeof(Mat4f)));
     CHECK_CUDA(cudaMalloc(&d_triangles, total_triangles * sizeof(Triangle)));
     CHECK_CUDA(cudaMalloc(&d_textures, total_texture_size * sizeof(unsigned char)));
     CHECK_CUDA(cudaMalloc(&d_triangle_counts, num_objects * sizeof(int)));
@@ -307,6 +317,7 @@ int main() {
     CHECK_CUDA(cudaMalloc(&d_zbuffer, width * height * sizeof(float)));
 
     // Copy data to GPU
+    CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_objects * sizeof(Mat4f), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_triangles, triangles[0].data(), triangles[0].size() * sizeof(Triangle), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_triangles + triangles[0].size(), triangles[1].data(), triangles[1].size() * sizeof(Triangle), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_textures, textures[0], tex_widths[0] * tex_heights[0] * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
@@ -315,9 +326,16 @@ int main() {
     CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths, num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights, num_objects * sizeof(int), cudaMemcpyHostToDevice));
 
-    // Launch kernel
-    dim3 block_size(16, 16);
-    dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
+    // Project vertices and normals
+    dim3 block_size(256);
+    dim3 grid_size(num_objects, (std::max(triangle_counts[0], triangle_counts[1]) + block_size.x - 1) / block_size.x);
+    project_vertices_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_counts, d_model_matrices, vp, num_objects);
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    // Rasterize image
+    block_size = dim3(16, 16);
+    grid_size = dim3((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
     rasterize_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_counts, d_textures, d_tex_widths, d_tex_heights, d_output, d_zbuffer, width, height, num_objects);
 
     // Copy result back to host and save
@@ -329,6 +347,7 @@ int main() {
     delete[] output;
     stbi_image_free(textures[0]);
     stbi_image_free(textures[1]);
+    cudaFree(d_model_matrices);
     cudaFree(d_triangles);
     cudaFree(d_textures);
     cudaFree(d_triangle_counts);
