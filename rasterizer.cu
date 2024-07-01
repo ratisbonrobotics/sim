@@ -81,9 +81,9 @@ __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts,
     int idx = flipped_y * width + x;
     zbuffer[idx] = FLT_MAX;
 
-    Vec3f color(0.2f, 0.2f, 0.2f);
+    Vec3f color(0.2f, 0.2f, 0.2f);  // Background color
     Vec3f light_dir = Vec3f(1, 1, 1).normalize();
-    Vec3f P(x, flipped_y, 0);
+    Vec3f P(x, flipped_y, 0);  // Current pixel position
 
     int triangle_offset = 0;
     int texture_offset = 0;
@@ -92,13 +92,14 @@ __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts,
         for (int i = 0; i < triangle_counts[obj]; i++) {
             Triangle& tri = triangles[triangle_offset + i];
             
+            // Transform vertices to screen space
             Vec3f screen_coords[3];
             for (int j = 0; j < 3; j++) {
                 Vec3f v = tri.v[j];
                 screen_coords[j] = Vec3f((v.x + 1.0f) * width / 2.0f, (1.0f - v.y) * height / 2.0f, v.z);
             }
 
-            // barycentric
+            // Calculate barycentric coordinates
             Vec3f s[2];
             for (int k = 2; k--; ) {
                 s[k].x = screen_coords[2][k] - screen_coords[0][k];
@@ -112,22 +113,26 @@ __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts,
             else
                 bc_screen = Vec3f(-1, 1, 1);
 
+            // Check if pixel is inside the triangle
             if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;
 
+            // Depth test
             float frag_depth = bc_screen.x * screen_coords[0].z + bc_screen.y * screen_coords[1].z + bc_screen.z * screen_coords[2].z;
             if (frag_depth < zbuffer[idx]) {
                 zbuffer[idx] = frag_depth;
 
+                // Texture sampling
                 Vec2f uv = tri.uv[0] * bc_screen.x + tri.uv[1] * bc_screen.y + tri.uv[2] * bc_screen.z;
                 int tex_x = uv.u * tex_widths[obj];
                 int tex_y = (1.0f - uv.v) * tex_heights[obj];
-
                 int tex_idx = texture_offset + (tex_y * tex_widths[obj] + tex_x) * 3;
                 Vec3f tex_color(textures[tex_idx] / 255.0f, textures[tex_idx + 1] / 255.0f, textures[tex_idx + 2] / 255.0f);
 
+                // Normal interpolation and lighting calculation
                 Vec3f normal = (tri.n[0] * bc_screen.x + tri.n[1] * bc_screen.y + tri.n[2] * bc_screen.z).normalize();
-
                 float diffuse = max(0.0f, normal.dot(light_dir));
+                
+                // Final color calculation
                 color = tex_color * (0.3f + 0.7f * diffuse);
             }
         }
@@ -135,6 +140,7 @@ __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts,
         texture_offset += tex_widths[obj] * tex_heights[obj] * 3;
     }
 
+    // Write final color to output buffer
     output[idx * 3 + 0] = static_cast<unsigned char>(min(color.x * 255.0f, 255.0f));
     output[idx * 3 + 1] = static_cast<unsigned char>(min(color.y * 255.0f, 255.0f));
     output[idx * 3 + 2] = static_cast<unsigned char>(min(color.z * 255.0f, 255.0f));
