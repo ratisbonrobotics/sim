@@ -52,7 +52,20 @@ struct Mat4f {
                 m[i][j] = (i == j) ? 1.0f : 0.0f;
     }
 
-    __host__ __device__ Vec3f transform(const Vec3f& v) const {
+    __host__ __device__ Mat4f operator*(const Mat4f& other) const {
+        Mat4f result;
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                result.m[i][j] = 0;
+                for (int k = 0; k < 4; k++) {
+                    result.m[i][j] += m[i][k] * other.m[k][j];
+                }
+            }
+        }
+        return result;
+    }
+
+    __host__ __device__ Vec3f multiplyPoint(const Vec3f& v) const {
         float x = m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z + m[0][3];
         float y = m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z + m[1][3];
         float z = m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z + m[2][3];
@@ -60,11 +73,11 @@ struct Mat4f {
         return Vec3f(x/w, y/w, z/w);
     }
 
-    __host__ __device__ Vec3f transformDirection(const Vec3f& n) const {
-        float x = m[0][0] * n.x + m[0][1] * n.y + m[0][2] * n.z;
-        float y = m[1][0] * n.x + m[1][1] * n.y + m[1][2] * n.z;
-        float z = m[2][0] * n.x + m[2][1] * n.y + m[2][2] * n.z;
-        return Vec3f(x, y, z).normalize();
+    __host__ __device__ Vec3f multiplyVector(const Vec3f& v) const {
+        float x = m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z;
+        float y = m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z;
+        float z = m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z;
+        return Vec3f(x, y, z);
     }
 };
 
@@ -188,6 +201,19 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
     }
 }
 
+Mat4f create_view_matrix(const Vec3f& eye, const Vec3f& center, const Vec3f& up) {
+    Vec3f f = (center - eye).normalize();
+    Vec3f s = f.cross(up).normalize();
+    Vec3f u = s.cross(f);
+
+    Mat4f result;
+    result.m[0][0] = s.x;  result.m[0][1] = s.y;  result.m[0][2] = s.z;  result.m[0][3] = -s.dot(eye);
+    result.m[1][0] = u.x;  result.m[1][1] = u.y;  result.m[1][2] = u.z;  result.m[1][3] = -u.dot(eye);
+    result.m[2][0] = -f.x; result.m[2][1] = -f.y; result.m[2][2] = -f.z; result.m[2][3] = f.dot(eye);
+    result.m[3][0] = 0.0f; result.m[3][1] = 0.0f; result.m[3][2] = 0.0f; result.m[3][3] = 1.0f;
+    return result;
+}
+
 Mat4f create_model_matrix(float tx, float ty, float tz, float scale = 1.0f, float rotation = 0.0f) {
     Mat4f matrix;
     
@@ -239,20 +265,23 @@ int main() {
     textures[0] = stbi_load("african_head_diffuse.tga", &tex_widths[0], &tex_heights[0], nullptr, 3);
     textures[1] = stbi_load("drone.png", &tex_widths[1], &tex_heights[1], nullptr, 3);
     
-    // Prepare model matrices and projection matrix
+    // Prepare model matrices, view and projection matrix
     Mat4f model_matrices[num_objects] = {
         create_model_matrix(-1.0f, 0.0f, -3.0f, 1.0f, 3.14159f * 1.75f), // African head
         create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f)  // Drone
     };
 
     Mat4f proj = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
+    Mat4f view = create_view_matrix(Vec3f(0, 0, 1), Vec3f(0, 0, 0), Vec3f(0, 1, 0));
 
-    // Project vertices and transform normals directly in the triangles
+    // Project vertices and normals
+    Mat4f vp = proj * view;
     for (int i = 0; i < num_objects; i++) {
+        Mat4f mvp = vp * model_matrices[i];
         for (auto& tri : triangles[i]) {
             for (int j = 0; j < 3; j++) {
-                tri.v[j] = proj.transform(model_matrices[i].transform(tri.v[j]));
-                tri.n[j] = model_matrices[i].transformDirection(tri.n[j]);
+                tri.v[j] = mvp.multiplyPoint(tri.v[j]);
+                tri.n[j] = model_matrices[i].multiplyVector(tri.n[j]).normalize();
             }
         }
     }
