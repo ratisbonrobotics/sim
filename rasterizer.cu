@@ -272,13 +272,10 @@ int main() {
     CHECK_CUDA(cudaMalloc(&d_zbuffer, width * height * sizeof(float)));
 
     // Copy data to GPU
-    int triangle_offset = 0, texture_offset = 0;
-    for (int i = 0; i < num_objects; i++) {
-        CHECK_CUDA(cudaMemcpy(d_triangles + triangle_offset, triangles[i].data(), triangles[i].size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-        CHECK_CUDA(cudaMemcpy(d_textures + texture_offset, textures[i], tex_widths[i] * tex_heights[i] * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-        triangle_offset += triangles[i].size();
-        texture_offset += tex_widths[i] * tex_heights[i] * 3;
-    }
+    CHECK_CUDA(cudaMemcpy(d_triangles, triangles[0].data(), triangles[0].size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_triangles + triangles[0].size(), triangles[1].data(), triangles[1].size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_textures, textures[0], tex_widths[0] * tex_heights[0] * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_textures + tex_widths[0] * tex_heights[0] * 3, textures[1], tex_widths[1] * tex_heights[1] * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
 
     int triangle_counts[num_objects] = {(int)triangles[0].size(), (int)triangles[1].size()};
     CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts, num_objects * sizeof(int), cudaMemcpyHostToDevice));
@@ -300,7 +297,8 @@ int main() {
 
     // Clean up
     delete[] output;
-    for (int i = 0; i < num_objects; i++) stbi_image_free(textures[i]);
+    stbi_image_free(textures[0]);
+    stbi_image_free(textures[1]);
     cudaFree(d_triangles);
     cudaFree(d_textures);
     cudaFree(d_triangle_counts);
