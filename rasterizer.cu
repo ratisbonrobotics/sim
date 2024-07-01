@@ -68,19 +68,6 @@ struct Mat4f {
     }
 };
 
-__device__ Vec3f barycentric(Vec3f A, Vec3f B, Vec3f C, Vec3f P) {
-    Vec3f s[2];
-    for (int i = 2; i--; ) {
-        s[i].x = C[i] - A[i];
-        s[i].y = B[i] - A[i];
-        s[i].z = A[i] - P[i];
-    }
-    Vec3f u = s[0].cross(s[1]);
-    if (std::abs(u.z) > 1e-2)
-        return Vec3f(1.f - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
-    return Vec3f(-1, 1, 1);
-}
-
 __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts, 
                                  unsigned char* textures, int* tex_widths, int* tex_heights, 
                                  unsigned char* output, float* zbuffer, 
@@ -111,7 +98,20 @@ __global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts,
                 screen_coords[j] = Vec3f((v.x + 1.0f) * width / 2.0f, (1.0f - v.y) * height / 2.0f, v.z);
             }
 
-            Vec3f bc_screen = barycentric(screen_coords[0], screen_coords[1], screen_coords[2], P);
+            // barycentric
+            Vec3f s[2];
+            for (int k = 2; k--; ) {
+                s[k].x = screen_coords[2][k] - screen_coords[0][k];
+                s[k].y = screen_coords[1][k] - screen_coords[0][k];
+                s[k].z = screen_coords[0][k] - P[k];
+            }
+            Vec3f u = s[0].cross(s[1]);
+            Vec3f bc_screen;
+            if (std::abs(u.z) > 1e-2)
+                bc_screen = Vec3f(1.f - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
+            else
+                bc_screen = Vec3f(-1, 1, 1);
+
             if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;
 
             float frag_depth = bc_screen.x * screen_coords[0].z + bc_screen.y * screen_coords[1].z + bc_screen.z * screen_coords[2].z;
