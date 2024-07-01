@@ -96,7 +96,7 @@ __host__ __device__ Mat4f perspective(float fov, float aspect, float near, float
     return result;
 }
 
-__global__ void rasterize_kernel(Vec3f* projected_vertices, Triangle* triangles, int* triangle_counts, 
+__global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts, 
                                  unsigned char* textures, int* tex_widths, int* tex_heights, 
                                  Mat4f* model_matrices, unsigned char* output, float* zbuffer, 
                                  int width, int height, int num_objects) {
@@ -109,11 +109,10 @@ __global__ void rasterize_kernel(Vec3f* projected_vertices, Triangle* triangles,
     int idx = flipped_y * width + x;
     zbuffer[idx] = FLT_MAX;
 
-    Vec3f color(0.2f, 0.2f, 0.2f); // Ambient light
+    Vec3f color(0.2f, 0.2f, 0.2f);
     Vec3f light_dir = Vec3f(1, 1, 1).normalize();
     Vec3f P(x, flipped_y, 0);
 
-    int vertex_offset = 0;
     int triangle_offset = 0;
     int texture_offset = 0;
 
@@ -123,7 +122,7 @@ __global__ void rasterize_kernel(Vec3f* projected_vertices, Triangle* triangles,
             
             Vec3f screen_coords[3];
             for (int j = 0; j < 3; j++) {
-                Vec3f v = projected_vertices[vertex_offset + i*3 + j];
+                Vec3f v = tri.v[j];
                 screen_coords[j] = Vec3f((v.x + 1.0f) * width / 2.0f, (1.0f - v.y) * height / 2.0f, v.z);
             }
 
@@ -148,7 +147,6 @@ __global__ void rasterize_kernel(Vec3f* projected_vertices, Triangle* triangles,
                 color = tex_color * (0.3f + 0.7f * diffuse);
             }
         }
-        vertex_offset += triangle_counts[obj] * 3;
         triangle_offset += triangle_counts[obj];
         texture_offset += tex_widths[obj] * tex_heights[obj] * 3;
     }
@@ -246,12 +244,11 @@ int main() {
     // Prepare projection matrix
     Mat4f proj = perspective(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
 
-    // Project vertices
-    std::vector<Vec3f> projected_vertices;
+    // Project vertices directly in the triangles
     for (int i = 0; i < num_objects; i++) {
-        for (const auto& tri : triangles[i]) {
+        for (auto& tri : triangles[i]) {
             for (int j = 0; j < 3; j++) {
-                projected_vertices.push_back(proj.transform(model_matrices[i].transform(tri.v[j])));
+                tri.v[j] = proj.transform(model_matrices[i].transform(tri.v[j]));
             }
         }
     }
@@ -261,7 +258,6 @@ int main() {
     unsigned char* d_textures;
     int* d_triangle_counts, *d_tex_widths, *d_tex_heights;
     Mat4f* d_model_matrices;
-    Vec3f* d_projected_vertices;
     unsigned char* d_output;
     float* d_zbuffer;
 
@@ -275,7 +271,6 @@ int main() {
     CHECK_CUDA(cudaMalloc(&d_tex_widths, num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_tex_heights, num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_model_matrices, num_objects * sizeof(Mat4f)));
-    CHECK_CUDA(cudaMalloc(&d_projected_vertices, projected_vertices.size() * sizeof(Vec3f)));
     CHECK_CUDA(cudaMalloc(&d_output, width * height * 3 * sizeof(unsigned char)));
     CHECK_CUDA(cudaMalloc(&d_zbuffer, width * height * sizeof(float)));
 
@@ -293,13 +288,12 @@ int main() {
     CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths, num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights, num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_objects * sizeof(Mat4f), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_projected_vertices, projected_vertices.data(), projected_vertices.size() * sizeof(Vec3f), cudaMemcpyHostToDevice));
 
     // Launch kernel
     dim3 block_size(16, 16);
     dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
 
-    rasterize_kernel<<<grid_size, block_size>>>(d_projected_vertices, d_triangles, d_triangle_counts, 
+    rasterize_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_counts, 
                                                 d_textures, d_tex_widths, d_tex_heights, 
                                                 d_model_matrices, d_output, d_zbuffer, width, height, num_objects);
 
@@ -317,7 +311,6 @@ int main() {
     cudaFree(d_tex_widths);
     cudaFree(d_tex_heights);
     cudaFree(d_model_matrices);
-    cudaFree(d_projected_vertices);
     cudaFree(d_output);
     cudaFree(d_zbuffer);
 
