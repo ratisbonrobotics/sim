@@ -233,13 +233,12 @@ int main() {
     textures[0] = stbi_load("african_head_diffuse.tga", &tex_widths[0], &tex_heights[0], nullptr, 3);
     textures[1] = stbi_load("drone.png", &tex_widths[1], &tex_heights[1], nullptr, 3);
     
-    // Prepare model matrices
+    // Prepare model matrices and projection matrix
     Mat4f model_matrices[num_objects] = {
         create_model_matrix(-1.0f, 0.0f, -3.0f, 1.0f, 3.14159f * 1.75f), // African head
         create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f)  // Drone
     };
 
-    // Prepare projection matrix
     Mat4f proj = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
 
     // Project vertices and transform normals directly in the triangles
@@ -261,6 +260,7 @@ int main() {
 
     int total_triangles = triangles[0].size() + triangles[1].size();
     int total_texture_size = (tex_widths[0] * tex_heights[0] + tex_widths[1] * tex_heights[1]) * 3;
+    int triangle_counts[num_objects] = {(int)triangles[0].size(), (int)triangles[1].size()};
 
     // Allocate GPU memory
     CHECK_CUDA(cudaMalloc(&d_triangles, total_triangles * sizeof(Triangle)));
@@ -276,8 +276,6 @@ int main() {
     CHECK_CUDA(cudaMemcpy(d_triangles + triangles[0].size(), triangles[1].data(), triangles[1].size() * sizeof(Triangle), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_textures, textures[0], tex_widths[0] * tex_heights[0] * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_textures + tex_widths[0] * tex_heights[0] * 3, textures[1], tex_widths[1] * tex_heights[1] * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-
-    int triangle_counts[num_objects] = {(int)triangles[0].size(), (int)triangles[1].size()};
     CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts, num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths, num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights, num_objects * sizeof(int), cudaMemcpyHostToDevice));
@@ -285,10 +283,7 @@ int main() {
     // Launch kernel
     dim3 block_size(16, 16);
     dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
-
-    rasterize_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_counts, 
-                                                d_textures, d_tex_widths, d_tex_heights, 
-                                                d_output, d_zbuffer, width, height, num_objects);
+    rasterize_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_counts, d_textures, d_tex_widths, d_tex_heights, d_output, d_zbuffer, width, height, num_objects);
 
     // Copy result back to host and save
     unsigned char* output = new unsigned char[width * height * 3];
