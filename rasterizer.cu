@@ -60,7 +60,7 @@ struct Mat4f {
         return Vec3f(x/w, y/w, z/w);
     }
 
-    __host__ __device__ Vec3f transformNormal(const Vec3f& n) const {
+    __host__ __device__ Vec3f transformDirection(const Vec3f& n) const {
         float x = m[0][0] * n.x + m[0][1] * n.y + m[0][2] * n.z;
         float y = m[1][0] * n.x + m[1][1] * n.y + m[1][2] * n.z;
         float z = m[2][0] * n.x + m[2][1] * n.y + m[2][2] * n.z;
@@ -247,7 +247,7 @@ int main() {
         for (auto& tri : triangles[i]) {
             for (int j = 0; j < 3; j++) {
                 tri.v[j] = proj.transform(model_matrices[i].transform(tri.v[j]));
-                tri.n[j] = model_matrices[i].transformNormal(tri.n[j]);
+                tri.n[j] = model_matrices[i].transformDirection(tri.n[j]);
             }
         }
     }
