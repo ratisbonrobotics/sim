@@ -4,6 +4,8 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <random>
+#include <ctime>
 #include <string>
 #include <algorithm>
 #define STB_IMAGE_IMPLEMENTATION
@@ -258,10 +260,25 @@ __global__ void transform_vertices_kernel(Triangle* triangles, int* triangle_off
     }
 }
 
+Mat4 create_model_matrix_random() {
+    static std::mt19937 gen(static_cast<unsigned int>(std::time(0)));
+    std::uniform_real_distribution<float> dis_pos(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> dis_scale(0.8f, 1.3f);
+    std::uniform_real_distribution<float> dis_rot(0.0f, 2.0f * 3.14159f);
+
+    float tx = dis_pos(gen);
+    float ty = dis_pos(gen);
+    float tz = dis_pos(gen) - 5.0f;  // Ensure object is in front of the camera
+    float scale = dis_scale(gen);
+    float rotation = dis_rot(gen);
+
+    return create_model_matrix(tx, ty, tz, scale, scale, scale, rotation);
+}
+
 int main() {
-    const int width = 800, height = 600;
+    const int width = 400, height = 300;
     const int num_objects = 2;
-    const int num_scenes = 2;
+    const int num_scenes = 4;
     
     std::vector<std::vector<Triangle>> triangles(num_objects);
     std::vector<unsigned char*> textures(num_objects);
@@ -277,13 +294,13 @@ int main() {
     // Prepare view and projection matrices
     Mat4 vp = create_projection_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f) * create_view_matrix(Vec3(0, 0, 1), Vec3(0, 0, 0), Vec3(0, 1, 0));
 
-    // Define model matrices for both scenes
-    Mat4 model_matrices[2][2] = {
-        {create_model_matrix(-1.0f, 0.0f, -3.0f, 1.0f, 1.0f, 1.0f, 3.14159f * 1.75f),
-         create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f, 0.1f, 0.1f)},
-        {create_model_matrix(-0.5f, 0.5f, -3.5f, 1.2f, 1.2f, 1.2f, 3.14159f * 1.5f),
-         create_model_matrix(0.5f, -0.5f, -2.0f, 0.15f, 0.15f, 0.15f, 3.14159f * 0.5f)}
-    };
+    // Define model matrices for all scenes
+    Mat4 model_matrices[num_scenes][num_objects];
+    for (int scene = 0; scene < num_scenes; scene++) {
+        for (int obj = 0; obj < num_objects; obj++) {
+            model_matrices[scene][obj] = create_model_matrix_random();
+        }
+    }
 
     std::vector<Triangle> all_triangles;
     std::vector<int> triangle_offsets(num_scenes * num_objects), triangle_counts(num_scenes * num_objects);
