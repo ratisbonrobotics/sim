@@ -192,18 +192,6 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
     }
 }
 
-Mat4 create_view_matrix(const Vec3& eye, const Vec3& center, const Vec3& up) {
-    Vec3 f = (center - eye).normalize();
-    Vec3 s = f.cross(up).normalize();
-    Vec3 u = s.cross(f);
-
-    Mat4 result;
-    result.m[0] = s.x;  result.m[1] = s.y;  result.m[2] = s.z;  result.m[3] = -s.dot(eye);
-    result.m[4] = u.x;  result.m[5] = u.y;  result.m[6] = u.z;  result.m[7] = -u.dot(eye);
-    result.m[8] = -f.x; result.m[9] = -f.y; result.m[10] = -f.z; result.m[11] = f.dot(eye);
-    return result;
-}
-
 Mat4 create_projection_matrix(float fov, float aspect, float near, float far) {
     float tanHalfFov = tan(fov / 2.0f);
     Mat4 result;
@@ -239,7 +227,7 @@ Mat4 create_model_matrix(float tx, float ty, float tz, float scale_x = 1.0f, flo
 }
 
 __global__ void transform_vertices_kernel(Triangle* triangles, int* triangle_offsets, int* triangle_counts, 
-                                          Mat4* model_matrices, Mat4 vp, int num_objects, int num_scenes) {
+                                          Mat4* model_matrices, Mat4 projection, int num_objects, int num_scenes) {
     int scene = blockIdx.y;
     int obj = blockIdx.z;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -252,11 +240,12 @@ __global__ void transform_vertices_kernel(Triangle* triangles, int* triangle_off
     if (idx >= count) return;
 
     Triangle& tri = triangles[offset + idx];
-    Mat4 mvp = vp * model_matrices[scene * num_objects + obj];
+    Mat4 model = model_matrices[scene * num_objects + obj];
+    Mat4 mvp = projection * model;
 
     for (int j = 0; j < 3; j++) {
         tri.v[j] = mvp.multiplyPoint(tri.v[j]);
-        tri.n[j] = model_matrices[scene * num_objects + obj].multiplyVector(tri.n[j]).normalize();
+        tri.n[j] = model.multiplyVector(tri.n[j]).normalize();
     }
 }
 
@@ -291,8 +280,8 @@ int main() {
     textures[0] = stbi_load("african_head_diffuse.tga", &tex_widths[0], &tex_heights[0], nullptr, 3);
     textures[1] = stbi_load("drone.png", &tex_widths[1], &tex_heights[1], nullptr, 3);
     
-    // Prepare view and projection matrices
-    Mat4 vp = create_projection_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f) * create_view_matrix(Vec3(0, 0, 1), Vec3(0, 0, 0), Vec3(0, 1, 0));
+    // Prepare projection matrix
+    Mat4 projection = create_projection_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
 
     // Define model matrices for all scenes
     Mat4 model_matrices[num_scenes][num_objects];
@@ -353,7 +342,7 @@ int main() {
     
     transform_vertices_kernel<<<grid_size, block_size>>>(
         d_triangles, d_triangle_offsets, d_triangle_counts,
-        d_model_matrices, vp, num_objects, num_scenes);
+        d_model_matrices, projection, num_objects, num_scenes);
 
     // Render scenes
     dim3 render_block_size(16, 16, 1);
