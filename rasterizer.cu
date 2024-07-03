@@ -236,16 +236,25 @@ Mat4 create_model_matrix(float tx, float ty, float tz, float scale_x = 1.0f, flo
     return matrix;
 }
 
-__global__ void transform_vertices_kernel(Triangle* triangles, int num_triangles, Mat4 vp, Mat4 model_matrix) {
+__global__ void transform_vertices_kernel(Triangle* triangles, int* triangle_offsets, int* triangle_counts, 
+                                          Mat4* model_matrices, Mat4 vp, int num_objects, int num_scenes) {
+    int scene = blockIdx.y;
+    int obj = blockIdx.z;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_triangles) return;
+    
+    if (scene >= num_scenes || obj >= num_objects) return;
+    
+    int offset = triangle_offsets[scene * num_objects + obj];
+    int count = triangle_counts[scene * num_objects + obj];
+    
+    if (idx >= count) return;
 
-    Triangle& tri = triangles[idx];
-    Mat4 mvp = vp * model_matrix;
+    Triangle& tri = triangles[offset + idx];
+    Mat4 mvp = vp * model_matrices[scene * num_objects + obj];
 
     for (int j = 0; j < 3; j++) {
         tri.v[j] = mvp.multiplyPoint(tri.v[j]);
-        tri.n[j] = model_matrix.multiplyVector(tri.n[j]).normalize();
+        tri.n[j] = model_matrices[scene * num_objects + obj].multiplyVector(tri.n[j]).normalize();
     }
 }
 
@@ -299,6 +308,7 @@ int main() {
     int *d_triangle_offsets, *d_triangle_counts, *d_tex_widths, *d_tex_heights;
     unsigned char *d_textures, *d_output;
     float* d_zbuffer;
+    Mat4* d_model_matrices;
 
     CHECK_CUDA(cudaMalloc(&d_triangles, all_triangles.size() * sizeof(Triangle)));
     CHECK_CUDA(cudaMalloc(&d_triangle_offsets, num_scenes * num_objects * sizeof(int)));
@@ -308,6 +318,7 @@ int main() {
     CHECK_CUDA(cudaMalloc(&d_tex_heights, num_scenes * num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_output, num_scenes * width * height * 3 * sizeof(unsigned char)));
     CHECK_CUDA(cudaMalloc(&d_zbuffer, num_scenes * width * height * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&d_model_matrices, num_scenes * num_objects * sizeof(Mat4)));
 
     // Copy data to GPU
     CHECK_CUDA(cudaMemcpy(d_triangles, all_triangles.data(), all_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
@@ -316,29 +327,25 @@ int main() {
     CHECK_CUDA(cudaMemcpy(d_textures, all_textures.data(), all_textures.size() * sizeof(unsigned char), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_widths, all_tex_widths.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_heights, all_tex_heights.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_scenes * num_objects * sizeof(Mat4), cudaMemcpyHostToDevice));
 
     // Transform vertices
-    for (int scene = 0; scene < num_scenes; scene++) {
-        for (int i = 0; i < num_objects; i++) {
-            int num_triangles = triangle_counts[scene * num_objects + i];
-            int offset = triangle_offsets[scene * num_objects + i];
-            
-            dim3 block_size(256);
-            dim3 grid_size((num_triangles + block_size.x - 1) / block_size.x);
-            
-            transform_vertices_kernel<<<grid_size, block_size>>>(
-                d_triangles + offset, num_triangles, vp, model_matrices[scene][i]);
-        }
-    }
+    int max_triangles = *std::max_element(triangle_counts.begin(), triangle_counts.end());
+    dim3 block_size(256);
+    dim3 grid_size((max_triangles + block_size.x - 1) / block_size.x, num_scenes, num_objects);
+    
+    transform_vertices_kernel<<<grid_size, block_size>>>(
+        d_triangles, d_triangle_offsets, d_triangle_counts,
+        d_model_matrices, vp, num_objects, num_scenes);
 
-    // Render image
-    dim3 block_size(16, 16, 1);
-    dim3 grid_size((width + block_size.x - 1) / block_size.x, 
-                   (height + block_size.y - 1) / block_size.y, 
-                   num_scenes);
-    render_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_offsets, d_triangle_counts,
-                                             d_textures, d_tex_widths, d_tex_heights,
-                                             d_output, d_zbuffer, width, height, num_objects, num_scenes);
+    // Render scenes
+    dim3 render_block_size(16, 16, 1);
+    dim3 render_grid_size((width + render_block_size.x - 1) / render_block_size.x, 
+                          (height + render_block_size.y - 1) / render_block_size.y, 
+                          num_scenes);
+    render_kernel<<<render_grid_size, render_block_size>>>(d_triangles, d_triangle_offsets, d_triangle_counts,
+                                                           d_textures, d_tex_widths, d_tex_heights,
+                                                           d_output, d_zbuffer, width, height, num_objects, num_scenes);
 
     // Copy result back to host and save
     std::vector<unsigned char> output(num_scenes * width * height * 3);
@@ -358,6 +365,7 @@ int main() {
     cudaFree(d_tex_heights);
     cudaFree(d_output);
     cudaFree(d_zbuffer);
+    cudaFree(d_model_matrices);
 
     // Clean up
     for (auto texture : textures) {
