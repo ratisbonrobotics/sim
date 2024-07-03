@@ -84,13 +84,6 @@ struct Mat4 {
     }
 };
 
-struct Object {
-    std::vector<Triangle> triangles;
-    unsigned char* texture;
-    int tex_width, tex_height;
-    Mat4 model_matrix;
-};
-
 __global__ void render_kernel(Triangle* triangles, int* triangle_offsets, int* triangle_counts,
                               unsigned char* textures, int* tex_widths, int* tex_heights,
                               unsigned char* output, float* zbuffer,
@@ -209,7 +202,7 @@ Mat4 create_view_matrix(const Vec3& eye, const Vec3& center, const Vec3& up) {
     return result;
 }
 
-Mat4 create_perspective_matrix(float fov, float aspect, float near, float far) {
+Mat4 create_projection_matrix(float fov, float aspect, float near, float far) {
     float tanHalfFov = tan(fov / 2.0f);
     Mat4 result;
     result.m[0] = 1.0f / (aspect * tanHalfFov);
@@ -248,19 +241,19 @@ int main() {
     const int num_objects = 2;
     const int num_scenes = 2;
     
-    std::vector<Object> objects(num_objects);
+    std::vector<std::vector<Triangle>> triangles(num_objects);
+    std::vector<unsigned char*> textures(num_objects);
+    std::vector<int> tex_widths(num_objects), tex_heights(num_objects);
 
     // Load objects and textures
-    load_obj("african_head.obj", objects[0].triangles);
-    load_obj("drone.obj", objects[1].triangles);
+    load_obj("african_head.obj", triangles[0]);
+    load_obj("drone.obj", triangles[1]);
     
-    objects[0].texture = stbi_load("african_head_diffuse.tga", &objects[0].tex_width, &objects[0].tex_height, nullptr, 3);
-    objects[1].texture = stbi_load("drone.png", &objects[1].tex_width, &objects[1].tex_height, nullptr, 3);
+    textures[0] = stbi_load("african_head_diffuse.tga", &tex_widths[0], &tex_heights[0], nullptr, 3);
+    textures[1] = stbi_load("drone.png", &tex_widths[1], &tex_heights[1], nullptr, 3);
     
     // Prepare view and projection matrices
-    Mat4 view = create_view_matrix(Vec3(0, 0, 1), Vec3(0, 0, 0), Vec3(0, 1, 0));
-    Mat4 projection = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
-    Mat4 vp = projection * view;
+    Mat4 vp = create_projection_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f) * create_view_matrix(Vec3(0, 0, 1), Vec3(0, 0, 0), Vec3(0, 1, 0));
 
     // Define model matrices for both scenes
     Mat4 model_matrices[2][2] = {
@@ -273,24 +266,24 @@ int main() {
     std::vector<Triangle> all_triangles;
     std::vector<int> triangle_offsets(num_scenes * num_objects), triangle_counts(num_scenes * num_objects);
     std::vector<unsigned char> all_textures;
-    std::vector<int> tex_widths(num_scenes * num_objects), tex_heights(num_scenes * num_objects);
+    std::vector<int> all_tex_widths(num_scenes * num_objects), all_tex_heights(num_scenes * num_objects);
 
     for (int scene = 0; scene < num_scenes; scene++) {
         for (int i = 0; i < num_objects; i++) {
-            objects[i].model_matrix = model_matrices[scene][i];
+            Mat4 model_matrix = model_matrices[scene][i];
             triangle_offsets[scene * num_objects + i] = all_triangles.size();
-            triangle_counts[scene * num_objects + i] = objects[i].triangles.size();
+            triangle_counts[scene * num_objects + i] = triangles[i].size();
             
-            for (auto tri : objects[i].triangles) {
+            for (auto tri : triangles[i]) {
                 for (int j = 0; j < 3; j++) {
-                    tri.v[j] = (vp * objects[i].model_matrix).multiplyPoint(tri.v[j]);
-                    tri.n[j] = objects[i].model_matrix.multiplyVector(tri.n[j]).normalize();
+                    tri.v[j] = (vp * model_matrix).multiplyPoint(tri.v[j]);
+                    tri.n[j] = model_matrix.multiplyVector(tri.n[j]).normalize();
                 }
                 all_triangles.push_back(tri);
             }
-            tex_widths[scene * num_objects + i] = objects[i].tex_width;
-            tex_heights[scene * num_objects + i] = objects[i].tex_height;
-            all_textures.insert(all_textures.end(), objects[i].texture, objects[i].texture + objects[i].tex_width * objects[i].tex_height * 3);
+            all_tex_widths[scene * num_objects + i] = tex_widths[i];
+            all_tex_heights[scene * num_objects + i] = tex_heights[i];
+            all_textures.insert(all_textures.end(), textures[i], textures[i] + tex_widths[i] * tex_heights[i] * 3);
         }
     }
 
@@ -314,8 +307,8 @@ int main() {
     CHECK_CUDA(cudaMemcpy(d_triangle_offsets, triangle_offsets.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_textures, all_textures.data(), all_textures.size() * sizeof(unsigned char), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_widths, all_tex_widths.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_heights, all_tex_heights.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
 
     // Render image
     dim3 block_size(16, 16, 1);
@@ -346,8 +339,8 @@ int main() {
     cudaFree(d_zbuffer);
 
     // Clean up
-    for (auto& obj : objects) {
-        stbi_image_free(obj.texture);
+    for (auto texture : textures) {
+        stbi_image_free(texture);
     }
 
     return 0;
