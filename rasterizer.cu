@@ -13,161 +13,142 @@
 #include <cfloat>
 #include <cmath>
 
-#define CHECK_CUDA(call) { cudaError_t err = call; if (err != cudaSuccess) { printf("CUDA error: %s, line %d\n", cudaGetErrorString(err), __LINE__); exit(1); } }
+#define CHECK_CUDA(call) { \
+    cudaError_t err = call; \
+    if (err != cudaSuccess) { \
+        printf("CUDA error: %s, line %d\n", cudaGetErrorString(err), __LINE__); \
+        exit(1); \
+    } \
+}
 
-struct Vec3f {
+struct Vec3 {
     float x, y, z;
-    __host__ __device__ Vec3f() : x(0), y(0), z(0) {}
-    __host__ __device__ Vec3f(float x, float y, float z) : x(x), y(y), z(z) {}
-    __host__ __device__ Vec3f operator+(const Vec3f& v) const { return Vec3f(x + v.x, y + v.y, z + v.z); }
-    __host__ __device__ Vec3f operator-(const Vec3f& v) const { return Vec3f(x - v.x, y - v.y, z - v.z); }
-    __host__ __device__ Vec3f operator*(float f) const { return Vec3f(x * f, y * f, z * f); }
-    __host__ __device__ float dot(const Vec3f& v) const { return x * v.x + y * v.y + z * v.z; }
-    __host__ __device__ Vec3f cross(const Vec3f& v) const { return Vec3f(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x); }
-    __host__ __device__ Vec3f normalize() const { float l = sqrt(x * x + y * y + z * z); return Vec3f(x / l, y / l, z / l); }
-    __host__ __device__ float& operator[](int i) { return i == 0 ? x : (i == 1 ? y : z); }
-    __host__ __device__ const float& operator[](int i) const { return i == 0 ? x : (i == 1 ? y : z); }
+    __host__ __device__ Vec3() : x(0), y(0), z(0) {}
+    __host__ __device__ Vec3(float x, float y, float z) : x(x), y(y), z(z) {}
+    __host__ __device__ Vec3 operator+(const Vec3& v) const { return Vec3(x + v.x, y + v.y, z + v.z); }
+    __host__ __device__ Vec3 operator-(const Vec3& v) const { return Vec3(x - v.x, y - v.y, z - v.z); }
+    __host__ __device__ Vec3 operator*(float f) const { return Vec3(x * f, y * f, z * f); }
+    __host__ __device__ float dot(const Vec3& v) const { return x * v.x + y * v.y + z * v.z; }
+    __host__ __device__ Vec3 cross(const Vec3& v) const { return Vec3(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x); }
+    __host__ __device__ Vec3 normalize() const { float l = sqrt(x * x + y * y + z * z); return Vec3(x / l, y / l, z / l); }
 };
 
-struct Vec2f {
+struct Vec2 {
     float u, v;
-    __host__ __device__ Vec2f() : u(0), v(0) {}
-    __host__ __device__ Vec2f(float u, float v) : u(u), v(v) {}
-    __host__ __device__ Vec2f operator*(float f) const { return Vec2f(u * f, v * f); }
-    __host__ __device__ Vec2f operator+(const Vec2f& other) const { return Vec2f(u + other.u, v + other.v); }
+    __host__ __device__ Vec2() : u(0), v(0) {}
+    __host__ __device__ Vec2(float u, float v) : u(u), v(v) {}
+    __host__ __device__ Vec2 operator*(float f) const { return Vec2(u * f, v * f); }
+    __host__ __device__ Vec2 operator+(const Vec2& other) const { return Vec2(u + other.u, v + other.v); }
 };
 
 struct Triangle {
-    Vec3f v[3];
-    Vec2f uv[3];
-    Vec3f n[3];
+    Vec3 v[3];
+    Vec2 uv[3];
+    Vec3 n[3];
 };
 
-struct Mat4f {
-    float m[4][4];
+struct Mat4 {
+    float m[16];
 
-    __host__ __device__ Mat4f() {
-        for (int i = 0; i < 4; i++)
-            for (int j = 0; j < 4; j++)
-                m[i][j] = (i == j) ? 1.0f : 0.0f;
+    __host__ __device__ Mat4() {
+        for (int i = 0; i < 16; i++) m[i] = (i % 5 == 0) ? 1.0f : 0.0f;
     }
 
-    __host__ __device__ Mat4f operator*(const Mat4f& other) const {
-        Mat4f result;
+    __host__ __device__ Mat4 operator*(const Mat4& other) const {
+        Mat4 result;
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                result.m[i][j] = 0;
+                result.m[i*4 + j] = 0;
                 for (int k = 0; k < 4; k++) {
-                    result.m[i][j] += m[i][k] * other.m[k][j];
+                    result.m[i*4 + j] += m[i*4 + k] * other.m[k*4 + j];
                 }
             }
         }
         return result;
     }
 
-    __host__ __device__ Vec3f multiplyPoint(const Vec3f& v) const {
-        float x = m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z + m[0][3];
-        float y = m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z + m[1][3];
-        float z = m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z + m[2][3];
-        float w = m[3][0] * v.x + m[3][1] * v.y + m[3][2] * v.z + m[3][3];
-        return Vec3f(x/w, y/w, z/w);
+    __host__ __device__ Vec3 multiplyPoint(const Vec3& v) const {
+        float x = m[0] * v.x + m[1] * v.y + m[2] * v.z + m[3];
+        float y = m[4] * v.x + m[5] * v.y + m[6] * v.z + m[7];
+        float z = m[8] * v.x + m[9] * v.y + m[10] * v.z + m[11];
+        float w = m[12] * v.x + m[13] * v.y + m[14] * v.z + m[15];
+        return Vec3(x/w, y/w, z/w);
     }
 
-    __host__ __device__ Vec3f multiplyVector(const Vec3f& v) const {
-        float x = m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z;
-        float y = m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z;
-        float z = m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z;
-        return Vec3f(x, y, z);
+    __host__ __device__ Vec3 multiplyVector(const Vec3& v) const {
+        return Vec3(
+            m[0] * v.x + m[1] * v.y + m[2] * v.z,
+            m[4] * v.x + m[5] * v.y + m[6] * v.z,
+            m[8] * v.x + m[9] * v.y + m[10] * v.z
+        );
     }
 };
 
-void project_vertices(std::vector<Triangle>* triangles, const int* triangle_counts, 
-                          const Mat4f* model_matrices, const Mat4f& vp, int num_objects) {
-    for (int obj_idx = 0; obj_idx < num_objects; obj_idx++) {
-        Mat4f mvp = vp * model_matrices[obj_idx];
-        for (int tri_idx = 0; tri_idx < triangle_counts[obj_idx]; tri_idx++) {
-            Triangle& tri = triangles[obj_idx][tri_idx];
-            for (int j = 0; j < 3; j++) {
-                tri.v[j] = mvp.multiplyPoint(tri.v[j]);
-                tri.n[j] = model_matrices[obj_idx].multiplyVector(tri.n[j]).normalize();
-            }
-        }
-    }
-}
+struct Object {
+    std::vector<Triangle> triangles;
+    unsigned char* texture;
+    int tex_width, tex_height;
+    Mat4 model_matrix;
+};
 
-__global__ void rasterize_kernel(Triangle* triangles, int* triangle_counts, 
-                                 unsigned char* textures, int* tex_widths, int* tex_heights, 
-                                 unsigned char* output, float* zbuffer, 
-                                 int width, int height, int num_objects) {
+__global__ void render_kernel(Triangle* triangles, int* triangle_offsets, int* triangle_counts,
+                              unsigned char* textures, int* tex_widths, int* tex_heights,
+                              unsigned char* output, float* zbuffer,
+                              int width, int height, int num_objects) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-
     if (x >= width || y >= height) return;
 
-    int flipped_y = height - 1 - y;
-    int idx = flipped_y * width + x;
+    int idx = y * width + x;
     zbuffer[idx] = FLT_MAX;
-
-    Vec3f color(0.2f, 0.2f, 0.2f);  // Background color
-    Vec3f light_dir = Vec3f(1, 1, 1).normalize();
-    Vec3f P(x, flipped_y, 0);  // Current pixel position
-
-    int triangle_offset = 0;
-    int texture_offset = 0;
+    Vec3 color(0.2f, 0.2f, 0.2f);
+    Vec3 light_dir(1, 1, 1);
+    light_dir = light_dir.normalize();
 
     for (int obj = 0; obj < num_objects; obj++) {
+        int triangle_offset = triangle_offsets[obj];
         for (int i = 0; i < triangle_counts[obj]; i++) {
             Triangle& tri = triangles[triangle_offset + i];
             
-            // Transform vertices to screen space
-            Vec3f screen_coords[3];
+            Vec3 screen_coords[3];
             for (int j = 0; j < 3; j++) {
-                Vec3f v = tri.v[j];
-                screen_coords[j] = Vec3f((v.x + 1.0f) * width / 2.0f, (1.0f - v.y) * height / 2.0f, v.z);
+                screen_coords[j] = Vec3((tri.v[j].x + 1.0f) * width / 2.0f,
+                                        (1.0f - tri.v[j].y) * height / 2.0f,
+                                        tri.v[j].z);
             }
 
-            // Calculate barycentric coordinates
-            Vec3f s[2];
-            for (int k = 2; k--; ) {
-                s[k].x = screen_coords[2][k] - screen_coords[0][k];
-                s[k].y = screen_coords[1][k] - screen_coords[0][k];
-                s[k].z = screen_coords[0][k] - P[k];
-            }
-            Vec3f u = s[0].cross(s[1]);
-            Vec3f bc_screen;
-            if (std::abs(u.z) > 1e-2)
-                bc_screen = Vec3f(1.f - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
-            else
-                bc_screen = Vec3f(-1, 1, 1);
+            Vec3 edge1 = screen_coords[1] - screen_coords[0];
+            Vec3 edge2 = screen_coords[2] - screen_coords[0];
+            Vec3 h = Vec3(x, y, 0) - screen_coords[0];
+            float det = edge1.x * edge2.y - edge1.y * edge2.x;
+            if (fabs(det) < 1e-6) continue;
 
-            // Check if pixel is inside the triangle
-            if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;
+            float u = (h.x * edge2.y - h.y * edge2.x) / det;
+            float v = (edge1.x * h.y - edge1.y * h.x) / det;
+            if (u < 0 || v < 0 || u + v > 1) continue;
 
-            // Depth test
-            float frag_depth = bc_screen.x * screen_coords[0].z + bc_screen.y * screen_coords[1].z + bc_screen.z * screen_coords[2].z;
-            if (frag_depth < zbuffer[idx]) {
-                zbuffer[idx] = frag_depth;
+            float z = screen_coords[0].z + u * (screen_coords[1].z - screen_coords[0].z) +
+                      v * (screen_coords[2].z - screen_coords[0].z);
+            if (z < zbuffer[idx]) {
+                zbuffer[idx] = z;
 
-                // Texture sampling
-                Vec2f uv = tri.uv[0] * bc_screen.x + tri.uv[1] * bc_screen.y + tri.uv[2] * bc_screen.z;
+                Vec2 uv = tri.uv[0] * (1-u-v) + tri.uv[1] * u + tri.uv[2] * v;
                 int tex_x = uv.u * tex_widths[obj];
                 int tex_y = (1.0f - uv.v) * tex_heights[obj];
-                int tex_idx = texture_offset + (tex_y * tex_widths[obj] + tex_x) * 3;
-                Vec3f tex_color(textures[tex_idx] / 255.0f, textures[tex_idx + 1] / 255.0f, textures[tex_idx + 2] / 255.0f);
+                int tex_idx = (tex_y * tex_widths[obj] + tex_x) * 3;
+                Vec3 tex_color(textures[tex_idx] / 255.0f,
+                               textures[tex_idx + 1] / 255.0f,
+                               textures[tex_idx + 2] / 255.0f);
 
-                // Normal interpolation and lighting calculation
-                Vec3f normal = (tri.n[0] * bc_screen.x + tri.n[1] * bc_screen.y + tri.n[2] * bc_screen.z).normalize();
+                Vec3 normal = (tri.n[0] * (1-u-v) + tri.n[1] * u + tri.n[2] * v).normalize();
                 float diffuse = max(0.0f, normal.dot(light_dir));
                 
-                // Final color calculation
                 color = tex_color * (0.3f + 0.7f * diffuse);
             }
         }
-        triangle_offset += triangle_counts[obj];
-        texture_offset += tex_widths[obj] * tex_heights[obj] * 3;
+        textures += tex_widths[obj] * tex_heights[obj] * 3;
     }
 
-    // Write final color to output buffer
     output[idx * 3 + 0] = static_cast<unsigned char>(min(color.x * 255.0f, 255.0f));
     output[idx * 3 + 1] = static_cast<unsigned char>(min(color.y * 255.0f, 255.0f));
     output[idx * 3 + 2] = static_cast<unsigned char>(min(color.z * 255.0f, 255.0f));
@@ -180,8 +161,8 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
         return;
     }
 
-    std::vector<Vec3f> vertices, normals;
-    std::vector<Vec2f> texcoords;
+    std::vector<Vec3> vertices, normals;
+    std::vector<Vec2> texcoords;
     std::string line, type;
 
     while (std::getline(file, line)) {
@@ -189,15 +170,15 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
         iss >> type;
 
         if (type == "v") {
-            Vec3f v;
+            Vec3 v;
             iss >> v.x >> v.y >> v.z;
             vertices.push_back(v);
         } else if (type == "vt") {
-            Vec2f vt;
+            Vec2 vt;
             iss >> vt.u >> vt.v;
             texcoords.push_back(vt);
         } else if (type == "vn") {
-            Vec3f vn;
+            Vec3 vn;
             iss >> vn.x >> vn.y >> vn.z;
             normals.push_back(vn);
         } else if (type == "f") {
@@ -215,137 +196,140 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
     }
 }
 
-Mat4f create_view_matrix(const Vec3f& eye, const Vec3f& center, const Vec3f& up) {
-    Vec3f f = (center - eye).normalize();
-    Vec3f s = f.cross(up).normalize();
-    Vec3f u = s.cross(f);
+Mat4 create_view_matrix(const Vec3& eye, const Vec3& center, const Vec3& up) {
+    Vec3 f = (center - eye).normalize();
+    Vec3 s = f.cross(up).normalize();
+    Vec3 u = s.cross(f);
 
-    Mat4f result;
-    result.m[0][0] = s.x;  result.m[0][1] = s.y;  result.m[0][2] = s.z;  result.m[0][3] = -s.dot(eye);
-    result.m[1][0] = u.x;  result.m[1][1] = u.y;  result.m[1][2] = u.z;  result.m[1][3] = -u.dot(eye);
-    result.m[2][0] = -f.x; result.m[2][1] = -f.y; result.m[2][2] = -f.z; result.m[2][3] = f.dot(eye);
-    result.m[3][0] = 0.0f; result.m[3][1] = 0.0f; result.m[3][2] = 0.0f; result.m[3][3] = 1.0f;
+    Mat4 result;
+    result.m[0] = s.x;  result.m[1] = s.y;  result.m[2] = s.z;  result.m[3] = -s.dot(eye);
+    result.m[4] = u.x;  result.m[5] = u.y;  result.m[6] = u.z;  result.m[7] = -u.dot(eye);
+    result.m[8] = -f.x; result.m[9] = -f.y; result.m[10] = -f.z; result.m[11] = f.dot(eye);
     return result;
 }
 
-Mat4f create_model_matrix(float tx, float ty, float tz, float scale = 1.0f, float rotation = 0.0f) {
-    Mat4f matrix;
-    
-    // Scale
-    matrix.m[0][0] = matrix.m[1][1] = matrix.m[2][2] = scale;
-    
-    // Rotation (around Y-axis)
+Mat4 create_perspective_matrix(float fov, float aspect, float near, float far) {
+    float tanHalfFov = tan(fov / 2.0f);
+    Mat4 result;
+    result.m[0] = 1.0f / (aspect * tanHalfFov);
+    result.m[5] = 1.0f / tanHalfFov;
+    result.m[10] = -(far + near) / (far - near);
+    result.m[11] = -2.0f * far * near / (far - near);
+    result.m[14] = -1.0f;
+    result.m[15] = 0.0f;
+    return result;
+}
+
+Mat4 create_model_matrix(float tx, float ty, float tz, float scale_x = 1.0f, float scale_y = 1.0f, float scale_z = 1.0f, float rotation = 0.0f) {
+    Mat4 matrix;
     float cos_r = cos(rotation);
     float sin_r = sin(rotation);
-    matrix.m[0][0] = cos_r * scale;
-    matrix.m[0][2] = -sin_r * scale;
-    matrix.m[2][0] = sin_r * scale;
-    matrix.m[2][2] = cos_r * scale;
+    
+    // Scale
+    matrix.m[0] = cos_r * scale_x;
+    matrix.m[5] = scale_y;
+    matrix.m[10] = cos_r * scale_z;
+    
+    // Rotation (around Y-axis)
+    matrix.m[2] = -sin_r * scale_z;
+    matrix.m[8] = sin_r * scale_x;
     
     // Translation
-    matrix.m[0][3] = tx;
-    matrix.m[1][3] = ty;
-    matrix.m[2][3] = tz;
+    matrix.m[3] = tx;
+    matrix.m[7] = ty;
+    matrix.m[11] = tz;
     
     return matrix;
 }
 
-Mat4f create_perspective_matrix(float fov, float aspect, float near, float far) {
-    Mat4f result;
-    float tanHalfFov = tan(fov / 2.0f);
-    
-    result.m[0][0] = 1.0f / (aspect * tanHalfFov);
-    result.m[1][1] = 1.0f / tanHalfFov;
-    result.m[2][2] = -(far + near) / (far - near);
-    result.m[2][3] = -2.0f * far * near / (far - near);
-    result.m[3][2] = -1.0f;
-    result.m[3][3] = 0.0f;
-    
-    return result;
-}
-
 int main() {
-    const int width = 340, height = 280;
+    const int width = 800, height = 600;
     const int num_objects = 2;
     
+    std::vector<Object> objects(num_objects);
+
     // Load objects and textures
-    std::vector<Triangle> triangles[num_objects];
-    unsigned char* textures[num_objects];
-    int tex_widths[num_objects], tex_heights[num_objects];
+    load_obj("african_head.obj", objects[0].triangles);
+    load_obj("drone.obj", objects[1].triangles);
     
-    load_obj("african_head.obj", triangles[0]);
-    load_obj("drone.obj", triangles[1]);
-    
-    textures[0] = stbi_load("african_head_diffuse.tga", &tex_widths[0], &tex_heights[0], nullptr, 3);
-    textures[1] = stbi_load("drone.png", &tex_widths[1], &tex_heights[1], nullptr, 3);
+    objects[0].texture = stbi_load("african_head_diffuse.tga", &objects[0].tex_width, &objects[0].tex_height, nullptr, 3);
+    objects[1].texture = stbi_load("drone.png", &objects[1].tex_width, &objects[1].tex_height, nullptr, 3);
     
     // Prepare model matrices, view and projection matrix
-    Mat4f model_matrices[num_objects] = {
-        create_model_matrix(-1.0f, 0.0f, -3.0f, 1.0f, 3.14159f * 1.75f), // African head
-        create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f)  // Drone
-    };
+    objects[0].model_matrix = create_model_matrix(-1.0f, 0.0f, -3.0f, 1.0f, 1.0f, 1.0f, 3.14159f * 1.75f);
+    objects[1].model_matrix = create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f, 0.1f, 0.1f);
 
-    Mat4f vp = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f) * create_view_matrix(Vec3f(0, 0, 1), Vec3f(0, 0, 0), Vec3f(0, 1, 0));
+    Mat4 view = create_view_matrix(Vec3(0, 0, 1), Vec3(0, 0, 0), Vec3(0, 1, 0));
+    Mat4 projection = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
+    Mat4 vp = projection * view;
 
     // Prepare GPU data
+    std::vector<Triangle> all_triangles;
+    std::vector<int> triangle_offsets(num_objects), triangle_counts(num_objects);
+    std::vector<unsigned char> all_textures;
+    std::vector<int> tex_widths(num_objects), tex_heights(num_objects);
+
+    for (int i = 0; i < num_objects; i++) {
+        triangle_offsets[i] = all_triangles.size();
+        triangle_counts[i] = objects[i].triangles.size();
+        
+        for (auto& tri : objects[i].triangles) {
+            for (int j = 0; j < 3; j++) {
+                tri.v[j] = (vp * objects[i].model_matrix).multiplyPoint(tri.v[j]);
+                tri.n[j] = objects[i].model_matrix.multiplyVector(tri.n[j]).normalize();
+            }
+            all_triangles.push_back(tri);
+        }
+        tex_widths[i] = objects[i].tex_width;
+        tex_heights[i] = objects[i].tex_height;
+        all_textures.insert(all_textures.end(), objects[i].texture, objects[i].texture + objects[i].tex_width * objects[i].tex_height * 3);
+    }
+
+    // Allocate GPU memory
     Triangle* d_triangles;
+    int* d_triangle_offsets, *d_triangle_counts;
     unsigned char* d_textures;
-    int* d_triangle_counts, *d_tex_widths, *d_tex_heights;
+    int* d_tex_widths, *d_tex_heights;
     unsigned char* d_output;
     float* d_zbuffer;
 
-    int total_triangles = triangles[0].size() + triangles[1].size();
-    int total_texture_size = (tex_widths[0] * tex_heights[0] + tex_widths[1] * tex_heights[1]) * 3;
-    int triangle_counts[num_objects] = {(int)triangles[0].size(), (int)triangles[1].size()};
-
-    // Project vertices and normals on CPU
-    project_vertices(triangles, triangle_counts, model_matrices, vp, num_objects);
-
-    // Allocate GPU memory
-    CHECK_CUDA(cudaMalloc(&d_triangles, total_triangles * sizeof(Triangle)));
-    CHECK_CUDA(cudaMalloc(&d_textures, total_texture_size * sizeof(unsigned char)));
+    CHECK_CUDA(cudaMalloc(&d_triangles, all_triangles.size() * sizeof(Triangle)));
+    CHECK_CUDA(cudaMalloc(&d_triangle_offsets, num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_triangle_counts, num_objects * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_textures, all_textures.size() * sizeof(unsigned char)));
     CHECK_CUDA(cudaMalloc(&d_tex_widths, num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_tex_heights, num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_output, width * height * 3 * sizeof(unsigned char)));
     CHECK_CUDA(cudaMalloc(&d_zbuffer, width * height * sizeof(float)));
 
     // Copy data to GPU
-    size_t triangle_offset = 0;
-    for (int i = 0; i < num_objects; i++) {
-        CHECK_CUDA(cudaMemcpy(d_triangles + triangle_offset, triangles[i].data(), 
-                              triangles[i].size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-        triangle_offset += triangles[i].size();
-    }
+    CHECK_CUDA(cudaMemcpy(d_triangles, all_triangles.data(), all_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_triangle_offsets, triangle_offsets.data(), num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts.data(), num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_textures, all_textures.data(), all_textures.size() * sizeof(unsigned char), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths.data(), num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights.data(), num_objects * sizeof(int), cudaMemcpyHostToDevice));
 
-    size_t texture_offset = 0;
-    for (int i = 0; i < num_objects; i++) {
-        CHECK_CUDA(cudaMemcpy(d_textures + texture_offset, textures[i], 
-                              tex_widths[i] * tex_heights[i] * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-        texture_offset += tex_widths[i] * tex_heights[i] * 3;
-    }
-
-    CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts, num_objects * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths, num_objects * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights, num_objects * sizeof(int), cudaMemcpyHostToDevice));
-
-    // Rasterize image
+    // Render image
     dim3 block_size(16, 16);
     dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
-    rasterize_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_counts, d_textures, d_tex_widths, d_tex_heights, d_output, d_zbuffer, width, height, num_objects);
+    render_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_offsets, d_triangle_counts,
+                                             d_textures, d_tex_widths, d_tex_heights,
+                                             d_output, d_zbuffer, width, height, num_objects);
 
     // Copy result back to host and save
-    unsigned char* output = new unsigned char[width * height * 3];
-    CHECK_CUDA(cudaMemcpy(output, d_output, width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
-    stbi_write_png("output.png", width, height, 3, output, width * 3);
+    std::vector<unsigned char> output(width * height * 3);
+    CHECK_CUDA(cudaMemcpy(output.data(), d_output, width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
+    stbi_write_png("output.png", width, height, 3, output.data(), width * 3);
 
     // Clean up
-    delete[] output;
-    stbi_image_free(textures[0]);
-    stbi_image_free(textures[1]);
+    for (auto& obj : objects) {
+        stbi_image_free(obj.texture);
+    }
     cudaFree(d_triangles);
-    cudaFree(d_textures);
+    cudaFree(d_triangle_offsets);
     cudaFree(d_triangle_counts);
+    cudaFree(d_textures);
     cudaFree(d_tex_widths);
     cudaFree(d_tex_heights);
     cudaFree(d_output);
