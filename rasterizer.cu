@@ -94,20 +94,21 @@ struct Object {
 __global__ void render_kernel(Triangle* triangles, int* triangle_offsets, int* triangle_counts,
                               unsigned char* textures, int* tex_widths, int* tex_heights,
                               unsigned char* output, float* zbuffer,
-                              int width, int height, int num_objects) {
+                              int width, int height, int num_objects, int num_scenes) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= width || y >= height) return;
+    int scene = blockIdx.z;
+    if (x >= width || y >= height || scene >= num_scenes) return;
 
-    int idx = y * width + x;
+    int idx = (scene * height + y) * width + x;
     zbuffer[idx] = FLT_MAX;
     Vec3 color(0.2f, 0.2f, 0.2f);
     Vec3 light_dir(1, 1, 1);
     light_dir = light_dir.normalize();
 
     for (int obj = 0; obj < num_objects; obj++) {
-        int triangle_offset = triangle_offsets[obj];
-        for (int i = 0; i < triangle_counts[obj]; i++) {
+        int triangle_offset = triangle_offsets[scene * num_objects + obj];
+        for (int i = 0; i < triangle_counts[scene * num_objects + obj]; i++) {
             Triangle& tri = triangles[triangle_offset + i];
             
             Vec3 screen_coords[3];
@@ -133,9 +134,9 @@ __global__ void render_kernel(Triangle* triangles, int* triangle_offsets, int* t
                 zbuffer[idx] = z;
 
                 Vec2 uv = tri.uv[0] * (1-u-v) + tri.uv[1] * u + tri.uv[2] * v;
-                int tex_x = uv.u * tex_widths[obj];
-                int tex_y = (1.0f - uv.v) * tex_heights[obj];
-                int tex_idx = (tex_y * tex_widths[obj] + tex_x) * 3;
+                int tex_x = uv.u * tex_widths[scene * num_objects + obj];
+                int tex_y = (1.0f - uv.v) * tex_heights[scene * num_objects + obj];
+                int tex_idx = (tex_y * tex_widths[scene * num_objects + obj] + tex_x) * 3;
                 Vec3 tex_color(textures[tex_idx] / 255.0f,
                                textures[tex_idx + 1] / 255.0f,
                                textures[tex_idx + 2] / 255.0f);
@@ -146,7 +147,7 @@ __global__ void render_kernel(Triangle* triangles, int* triangle_offsets, int* t
                 color = tex_color * (0.3f + 0.7f * diffuse);
             }
         }
-        textures += tex_widths[obj] * tex_heights[obj] * 3;
+        textures += tex_widths[scene * num_objects + obj] * tex_heights[scene * num_objects + obj] * 3;
     }
 
     output[idx * 3 + 0] = static_cast<unsigned char>(min(color.x * 255.0f, 255.0f));
@@ -245,6 +246,7 @@ Mat4 create_model_matrix(float tx, float ty, float tz, float scale_x = 1.0f, flo
 int main() {
     const int width = 800, height = 600;
     const int num_objects = 2;
+    const int num_scenes = 2;
     
     std::vector<Object> objects(num_objects);
 
@@ -255,77 +257,85 @@ int main() {
     objects[0].texture = stbi_load("african_head_diffuse.tga", &objects[0].tex_width, &objects[0].tex_height, nullptr, 3);
     objects[1].texture = stbi_load("drone.png", &objects[1].tex_width, &objects[1].tex_height, nullptr, 3);
     
-    // Prepare model matrices, view and projection matrix
-    objects[0].model_matrix = create_model_matrix(-1.0f, 0.0f, -3.0f, 1.0f, 1.0f, 1.0f, 3.14159f * 1.75f);
-    objects[1].model_matrix = create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f, 0.1f, 0.1f);
-
+    // Prepare view and projection matrices
     Mat4 view = create_view_matrix(Vec3(0, 0, 1), Vec3(0, 0, 0), Vec3(0, 1, 0));
     Mat4 projection = create_perspective_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
     Mat4 vp = projection * view;
 
-    // Prepare GPU data
-    std::vector<Triangle> all_triangles;
-    std::vector<int> triangle_offsets(num_objects), triangle_counts(num_objects);
-    std::vector<unsigned char> all_textures;
-    std::vector<int> tex_widths(num_objects), tex_heights(num_objects);
+    // Define model matrices for both scenes
+    Mat4 model_matrices[2][2] = {
+        {create_model_matrix(-1.0f, 0.0f, -3.0f, 1.0f, 1.0f, 1.0f, 3.14159f * 1.75f),
+         create_model_matrix(1.0f, 0.5f, -2.5f, 0.1f, 0.1f, 0.1f)},
+        {create_model_matrix(-0.5f, 0.5f, -3.5f, 1.2f, 1.2f, 1.2f, 3.14159f * 1.5f),
+         create_model_matrix(0.5f, -0.5f, -2.0f, 0.15f, 0.15f, 0.15f, 3.14159f * 0.5f)}
+    };
 
-    for (int i = 0; i < num_objects; i++) {
-        triangle_offsets[i] = all_triangles.size();
-        triangle_counts[i] = objects[i].triangles.size();
-        
-        for (auto& tri : objects[i].triangles) {
-            for (int j = 0; j < 3; j++) {
-                tri.v[j] = (vp * objects[i].model_matrix).multiplyPoint(tri.v[j]);
-                tri.n[j] = objects[i].model_matrix.multiplyVector(tri.n[j]).normalize();
+    std::vector<Triangle> all_triangles;
+    std::vector<int> triangle_offsets(num_scenes * num_objects), triangle_counts(num_scenes * num_objects);
+    std::vector<unsigned char> all_textures;
+    std::vector<int> tex_widths(num_scenes * num_objects), tex_heights(num_scenes * num_objects);
+
+    for (int scene = 0; scene < num_scenes; scene++) {
+        for (int i = 0; i < num_objects; i++) {
+            objects[i].model_matrix = model_matrices[scene][i];
+            triangle_offsets[scene * num_objects + i] = all_triangles.size();
+            triangle_counts[scene * num_objects + i] = objects[i].triangles.size();
+            
+            for (auto tri : objects[i].triangles) {
+                for (int j = 0; j < 3; j++) {
+                    tri.v[j] = (vp * objects[i].model_matrix).multiplyPoint(tri.v[j]);
+                    tri.n[j] = objects[i].model_matrix.multiplyVector(tri.n[j]).normalize();
+                }
+                all_triangles.push_back(tri);
             }
-            all_triangles.push_back(tri);
+            tex_widths[scene * num_objects + i] = objects[i].tex_width;
+            tex_heights[scene * num_objects + i] = objects[i].tex_height;
+            all_textures.insert(all_textures.end(), objects[i].texture, objects[i].texture + objects[i].tex_width * objects[i].tex_height * 3);
         }
-        tex_widths[i] = objects[i].tex_width;
-        tex_heights[i] = objects[i].tex_height;
-        all_textures.insert(all_textures.end(), objects[i].texture, objects[i].texture + objects[i].tex_width * objects[i].tex_height * 3);
     }
 
     // Allocate GPU memory
     Triangle* d_triangles;
-    int* d_triangle_offsets, *d_triangle_counts;
-    unsigned char* d_textures;
-    int* d_tex_widths, *d_tex_heights;
-    unsigned char* d_output;
+    int *d_triangle_offsets, *d_triangle_counts, *d_tex_widths, *d_tex_heights;
+    unsigned char *d_textures, *d_output;
     float* d_zbuffer;
 
     CHECK_CUDA(cudaMalloc(&d_triangles, all_triangles.size() * sizeof(Triangle)));
-    CHECK_CUDA(cudaMalloc(&d_triangle_offsets, num_objects * sizeof(int)));
-    CHECK_CUDA(cudaMalloc(&d_triangle_counts, num_objects * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_triangle_offsets, num_scenes * num_objects * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_triangle_counts, num_scenes * num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_textures, all_textures.size() * sizeof(unsigned char)));
-    CHECK_CUDA(cudaMalloc(&d_tex_widths, num_objects * sizeof(int)));
-    CHECK_CUDA(cudaMalloc(&d_tex_heights, num_objects * sizeof(int)));
-    CHECK_CUDA(cudaMalloc(&d_output, width * height * 3 * sizeof(unsigned char)));
-    CHECK_CUDA(cudaMalloc(&d_zbuffer, width * height * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&d_tex_widths, num_scenes * num_objects * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_tex_heights, num_scenes * num_objects * sizeof(int)));
+    CHECK_CUDA(cudaMalloc(&d_output, num_scenes * width * height * 3 * sizeof(unsigned char)));
+    CHECK_CUDA(cudaMalloc(&d_zbuffer, num_scenes * width * height * sizeof(float)));
 
     // Copy data to GPU
     CHECK_CUDA(cudaMemcpy(d_triangles, all_triangles.data(), all_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_triangle_offsets, triangle_offsets.data(), num_objects * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts.data(), num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_triangle_offsets, triangle_offsets.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_textures, all_textures.data(), all_textures.size() * sizeof(unsigned char), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths.data(), num_objects * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights.data(), num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_widths, tex_widths.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_tex_heights, tex_heights.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
 
     // Render image
-    dim3 block_size(16, 16);
-    dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
+    dim3 block_size(16, 16, 1);
+    dim3 grid_size((width + block_size.x - 1) / block_size.x, 
+                   (height + block_size.y - 1) / block_size.y, 
+                   num_scenes);
     render_kernel<<<grid_size, block_size>>>(d_triangles, d_triangle_offsets, d_triangle_counts,
                                              d_textures, d_tex_widths, d_tex_heights,
-                                             d_output, d_zbuffer, width, height, num_objects);
+                                             d_output, d_zbuffer, width, height, num_objects, num_scenes);
 
     // Copy result back to host and save
-    std::vector<unsigned char> output(width * height * 3);
-    CHECK_CUDA(cudaMemcpy(output.data(), d_output, width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
-    stbi_write_png("output.png", width, height, 3, output.data(), width * 3);
-
-    // Clean up
-    for (auto& obj : objects) {
-        stbi_image_free(obj.texture);
+    std::vector<unsigned char> output(num_scenes * width * height * 3);
+    CHECK_CUDA(cudaMemcpy(output.data(), d_output, num_scenes * width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
+    
+    for (int scene = 0; scene < num_scenes; scene++) {
+        stbi_write_png(("output_" + std::to_string(scene) + ".png").c_str(), width, height, 3, 
+                       output.data() + scene * width * height * 3, width * 3);
     }
+
+    // Clean up GPU memory
     cudaFree(d_triangles);
     cudaFree(d_triangle_offsets);
     cudaFree(d_triangle_counts);
@@ -334,6 +344,11 @@ int main() {
     cudaFree(d_tex_heights);
     cudaFree(d_output);
     cudaFree(d_zbuffer);
+
+    // Clean up
+    for (auto& obj : objects) {
+        stbi_image_free(obj.texture);
+    }
 
     return 0;
 }
