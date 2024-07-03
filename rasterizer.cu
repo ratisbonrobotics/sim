@@ -8,10 +8,12 @@
 #include <ctime>
 #include <string>
 #include <algorithm>
+#pragma nv_diag_suppress 550
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#pragma nv_diag_default 550
 #include <cfloat>
 #include <cmath>
 
@@ -54,6 +56,16 @@ struct Mat4 {
 
     __host__ __device__ Mat4() {
         for (int i = 0; i < 16; i++) m[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    }
+
+    __host__ __device__ Mat4(float m00, float m01, float m02, float m03,
+                             float m10, float m11, float m12, float m13,
+                             float m20, float m21, float m22, float m23,
+                             float m30, float m31, float m32, float m33) {
+        m[0] = m00; m[1] = m01; m[2] = m02; m[3] = m03;
+        m[4] = m10; m[5] = m11; m[6] = m12; m[7] = m13;
+        m[8] = m20; m[9] = m21; m[10] = m22; m[11] = m23;
+        m[12] = m30; m[13] = m31; m[14] = m32; m[15] = m33;
     }
 
     __host__ __device__ Mat4 operator*(const Mat4& other) const {
@@ -204,26 +216,27 @@ Mat4 create_projection_matrix(float fov, float aspect, float near, float far) {
     return result;
 }
 
-Mat4 create_model_matrix(float tx, float ty, float tz, float scale_x = 1.0f, float scale_y = 1.0f, float scale_z = 1.0f, float rotation = 0.0f) {
-    Mat4 matrix;
+Mat4 create_model_matrix_random() {
+    static std::mt19937 gen(static_cast<unsigned int>(std::time(0)));
+    std::uniform_real_distribution<float> dis_pos(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> dis_scale(0.8f, 1.3f);
+    std::uniform_real_distribution<float> dis_rot(0.0f, 2.0f * 3.14159f);
+
+    float tx = dis_pos(gen);
+    float ty = dis_pos(gen);
+    float tz = dis_pos(gen) - 5.0f;  // Ensure object is in front of the camera
+    float scale = dis_scale(gen);
+    float rotation = dis_rot(gen);
+
     float cos_r = cos(rotation);
     float sin_r = sin(rotation);
-    
-    // Scale
-    matrix.m[0] = cos_r * scale_x;
-    matrix.m[5] = scale_y;
-    matrix.m[10] = cos_r * scale_z;
-    
-    // Rotation (around Y-axis)
-    matrix.m[2] = -sin_r * scale_z;
-    matrix.m[8] = sin_r * scale_x;
-    
-    // Translation
-    matrix.m[3] = tx;
-    matrix.m[7] = ty;
-    matrix.m[11] = tz;
-    
-    return matrix;
+
+    return Mat4(
+        cos_r * scale,  0.0f,           -sin_r * scale,  tx,
+        0.0f,           scale,          0.0f,            ty,
+        sin_r * scale,  0.0f,           cos_r * scale,   tz,
+        0.0f,           0.0f,           0.0f,            1.0f
+    );
 }
 
 __global__ void transform_vertices_kernel(Triangle* triangles, int* triangle_offsets, int* triangle_counts, 
@@ -247,21 +260,6 @@ __global__ void transform_vertices_kernel(Triangle* triangles, int* triangle_off
         tri.v[j] = mvp.multiplyPoint(tri.v[j]);
         tri.n[j] = model.multiplyVector(tri.n[j]).normalize();
     }
-}
-
-Mat4 create_model_matrix_random() {
-    static std::mt19937 gen(static_cast<unsigned int>(std::time(0)));
-    std::uniform_real_distribution<float> dis_pos(-1.0f, 1.0f);
-    std::uniform_real_distribution<float> dis_scale(0.8f, 1.3f);
-    std::uniform_real_distribution<float> dis_rot(0.0f, 2.0f * 3.14159f);
-
-    float tx = dis_pos(gen);
-    float ty = dis_pos(gen);
-    float tz = dis_pos(gen) - 5.0f;  // Ensure object is in front of the camera
-    float scale = dis_scale(gen);
-    float rotation = dis_rot(gen);
-
-    return create_model_matrix(tx, ty, tz, scale, scale, scale, rotation);
 }
 
 int main() {
