@@ -270,6 +270,7 @@ int main() {
     const int width = 400, height = 300;
     const int num_objects = 2;
     const int num_scenes = 4;
+    const int num_frames = 4;  // Number of frames to render
     
     std::vector<std::vector<Triangle>> triangles(num_objects);
     std::vector<unsigned char*> textures(num_objects);
@@ -285,7 +286,7 @@ int main() {
     // Prepare projection matrix
     Mat4 projection = create_projection_matrix(3.14159f / 4.0f, (float)width / height, 0.1f, 100.0f);
 
-    // Define model matrices for all scenes
+    // Define initial model matrices for all scenes
     Mat4 model_matrices[num_scenes][num_objects];
     for (int scene = 0; scene < num_scenes; scene++) {
         for (int obj = 0; obj < num_objects; obj++) {
@@ -329,40 +330,77 @@ int main() {
     CHECK_CUDA(cudaMalloc(&d_zbuffer, num_scenes * width * height * sizeof(float)));
     CHECK_CUDA(cudaMalloc(&d_model_matrices, num_scenes * num_objects * sizeof(Mat4)));
 
-    // Copy data to GPU
+    // Copy static data to GPU
     CHECK_CUDA(cudaMemcpy(d_input_triangles, all_triangles.data(), all_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_triangle_offsets, triangle_offsets.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_textures, all_textures.data(), all_textures.size() * sizeof(unsigned char), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_widths, all_tex_widths.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_tex_heights, all_tex_heights.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_scenes * num_objects * sizeof(Mat4), cudaMemcpyHostToDevice));
 
-    // Transform vertices
+    // Set up kernel configurations
     int max_triangles = *std::max_element(triangle_counts.begin(), triangle_counts.end());
-    dim3 block_size(256);
-    dim3 grid_size((max_triangles + block_size.x - 1) / block_size.x, num_scenes, num_objects);
+    dim3 transform_block_size(256);
+    dim3 transform_grid_size((max_triangles + transform_block_size.x - 1) / transform_block_size.x, num_scenes, num_objects);
     
-    transform_vertices_kernel<<<grid_size, block_size>>>(
-        d_input_triangles, d_transformed_triangles, d_triangle_offsets, d_triangle_counts,
-        d_model_matrices, projection, num_objects, num_scenes);
-
-    // Render scenes
     dim3 render_block_size(16, 16, 1);
     dim3 render_grid_size((width + render_block_size.x - 1) / render_block_size.x, 
                           (height + render_block_size.y - 1) / render_block_size.y, 
                           num_scenes);
-    render_kernel<<<render_grid_size, render_block_size>>>(d_transformed_triangles, d_triangle_offsets, d_triangle_counts,
-                                                           d_textures, d_tex_widths, d_tex_heights,
-                                                           d_output, d_zbuffer, width, height, num_objects, num_scenes);
 
-    // Copy result back to host and save
-    std::vector<unsigned char> output(num_scenes * width * height * 3);
-    CHECK_CUDA(cudaMemcpy(output.data(), d_output, num_scenes * width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
-    
-    for (int scene = 0; scene < num_scenes; scene++) {
-        stbi_write_png(("output_" + std::to_string(scene) + ".png").c_str(), width, height, 3, 
-                       output.data() + scene * width * height * 3, width * 3);
+    // Main rendering loop
+    for (int frame = 0; frame < num_frames; frame++) {
+        // Update model matrices (rotate objects)
+        for (int scene = 0; scene < num_scenes; scene++) {
+            for (int obj = 0; obj < num_objects; obj++) {
+                float rotation = 0.1f * frame;  // Adjust rotation speed as needed
+                
+                // Create rotation matrix
+                Mat4 rotation_matrix(
+                    cos(rotation), 0, -sin(rotation), 0,
+                    0, 1, 0, 0,
+                    sin(rotation), 0, cos(rotation), 0,
+                    0, 0, 0, 1
+                );
+
+                // Extract the current translation
+                Vec3 translation(model_matrices[scene][obj].m[3], 
+                                 model_matrices[scene][obj].m[7], 
+                                 model_matrices[scene][obj].m[11]);
+
+                // Apply rotation to the orientation part of the model matrix
+                model_matrices[scene][obj] = rotation_matrix * model_matrices[scene][obj];
+
+                // Restore the original translation
+                model_matrices[scene][obj].m[3] = translation.x;
+                model_matrices[scene][obj].m[7] = translation.y;
+                model_matrices[scene][obj].m[11] = translation.z;
+            }
+        }
+
+        // Copy updated model matrices to GPU
+        CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_scenes * num_objects * sizeof(Mat4), cudaMemcpyHostToDevice));
+
+        // Transform vertices
+        transform_vertices_kernel<<<transform_grid_size, transform_block_size>>>(
+            d_input_triangles, d_transformed_triangles, d_triangle_offsets, d_triangle_counts,
+            d_model_matrices, projection, num_objects, num_scenes);
+
+        // Render scenes
+        render_kernel<<<render_grid_size, render_block_size>>>(
+            d_transformed_triangles, d_triangle_offsets, d_triangle_counts,
+            d_textures, d_tex_widths, d_tex_heights,
+            d_output, d_zbuffer, width, height, num_objects, num_scenes);
+
+        // Copy result back to host and save
+        std::vector<unsigned char> output(num_scenes * width * height * 3);
+        CHECK_CUDA(cudaMemcpy(output.data(), d_output, num_scenes * width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
+        
+        for (int scene = 0; scene < num_scenes; scene++) {
+            std::string filename = "output_scene" + std::to_string(scene) + "_frame" + std::to_string(frame) + ".png";
+            stbi_write_png(filename.c_str(), width, height, 3, 
+                           output.data() + scene * width * height * 3, width * 3);
+        }
     }
 
     // Clean up GPU memory
