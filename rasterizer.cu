@@ -184,35 +184,96 @@ int main() {
         }
     }
 
+    // Drone dynamics constants
+    const float k_f = 0.0004905f;
+    const float k_m = 0.00004905f;
+    const float L = 0.25f;
+    const float I[3] = {0.01f, 0.02f, 0.01f};
+    const float g = 9.81f;
+    const float m = 0.5f;
+    const float dt = 0.01f;
+    const float omega_min = 30.0f;
+    const float omega_max = 70.0f;
+    const float omega_stable = 50.0f;
+
+    // Drone state variables
+    std::vector<float> omega(4, omega_stable);
+    omega[0] += 1.0f;
+    std::vector<Vec3> angular_velocity_B(num_scenes, Vec3(0, 0, 0));
+    std::vector<Vec3> linear_velocity_W(num_scenes, Vec3(0, 0, 0));
+    std::vector<Vec3> linear_position_W(num_scenes);
+    std::vector<Mat3> R_W_B(num_scenes);
+
+    // Initialize drone positions and orientations
+    for (int scene = 0; scene < num_scenes; scene++) {
+        linear_position_W[scene] = Vec3(
+            model_matrices[scene][1].m[3],
+            model_matrices[scene][1].m[7],
+            model_matrices[scene][1].m[11]
+        );
+        R_W_B[scene] = Mat3::identity();
+    }
+
     // Main rendering loop
     std::vector<unsigned char> output(num_scenes * width * height * 3);
     for (int frame = 0; frame < num_frames; frame++) {
         // Update model matrices (rotate objects)
         for (int scene = 0; scene < num_scenes; scene++) {
-            for (int obj = 0; obj < num_objects; obj++) {
-                float rotation = 0.1f;  // Adjust rotation speed as needed
-                
-                // Create rotation matrix
-                Mat4 rotation_matrix(
-                    cos(rotation), 0, -sin(rotation), 0,
-                    0, 1, 0, 0,
-                    sin(rotation), 0, cos(rotation), 0,
-                    0, 0, 0, 1
-                );
+            // Update non-drone object (e.g., african head)
+            float rotation = 0.1f;
+            Mat4 rotation_matrix = Mat4::rotationY(rotation);
+            Vec3 translation(model_matrices[scene][0].m[3], 
+                             model_matrices[scene][0].m[7], 
+                             model_matrices[scene][0].m[11]);
+            model_matrices[scene][0] = rotation_matrix * model_matrices[scene][0];
+            model_matrices[scene][0].setTranslation(translation);
 
-                // Extract the current translation
-                Vec3 translation(model_matrices[scene][obj].m[3], 
-                                 model_matrices[scene][obj].m[7], 
-                                 model_matrices[scene][obj].m[11]);
-
-                // Apply rotation to the orientation part of the model matrix
-                model_matrices[scene][obj] = rotation_matrix * model_matrices[scene][obj];
-
-                // Restore the original translation
-                model_matrices[scene][obj].m[3] = translation.x;
-                model_matrices[scene][obj].m[7] = translation.y;
-                model_matrices[scene][obj].m[11] = translation.z;
+            // Update drone using dynamics model
+            // Limit motor speeds
+            for (int i = 0; i < 4; i++) {
+                omega[i] = std::max(std::min(omega[i], omega_max), omega_min);
             }
+
+            // Forces and moments
+            float F[4], M[4];
+            for (int i = 0; i < 4; i++) {
+                F[i] = k_f * omega[i] * std::abs(omega[i]);
+                M[i] = k_m * omega[i] * std::abs(omega[i]);
+            }
+
+            // Thrust
+            Vec3 f_B_thrust(0, F[0] + F[1] + F[2] + F[3], 0);
+
+            // Torque
+            Vec3 tau_B_drag(0, M[0] - M[1] + M[2] - M[3], 0);
+            Vec3 tau_B_thrust = 
+                Vec3(-L, 0, L).cross(Vec3(0, F[0], 0)) +
+                Vec3(L, 0, L).cross(Vec3(0, F[1], 0)) +
+                Vec3(L, 0, -L).cross(Vec3(0, F[2], 0)) +
+                Vec3(-L, 0, -L).cross(Vec3(0, F[3], 0));
+            Vec3 tau_B = tau_B_drag + tau_B_thrust;
+
+            // Accelerations
+            Vec3 linear_acceleration_W = Vec3(0, -g * m, 0) + R_W_B[scene] * f_B_thrust;
+            linear_acceleration_W = linear_acceleration_W * (1.0f / m);
+
+            Mat3 I_mat = Mat3::diag(I[0], I[1], I[2]);
+            Vec3 angular_acceleration_B = (-angular_velocity_B[scene].cross(I_mat * angular_velocity_B[scene])) + tau_B;
+            angular_acceleration_B.x /= I[0];
+            angular_acceleration_B.y /= I[1];
+            angular_acceleration_B.z /= I[2];
+
+            // Advance state
+            linear_velocity_W[scene] += linear_acceleration_W * dt;
+            linear_position_W[scene] += linear_velocity_W[scene] * dt;
+            angular_velocity_B[scene] += angular_acceleration_B * dt;
+            R_W_B[scene] += R_W_B[scene] * skew(angular_velocity_B[scene]) * dt;
+
+            // Update drone model matrix
+            model_matrices[scene][1] = Mat4::identity();
+            model_matrices[scene][1].setTranslation(linear_position_W[scene]);
+            model_matrices[scene][1].setRotation(R_W_B[scene]);
+            model_matrices[scene][1] = Mat4::scale(0.01f, 0.01f, 0.01f) * model_matrices[scene][1];
         }
 
         // Copy updated model matrices to GPU

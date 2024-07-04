@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <stdio.h>
@@ -30,6 +32,8 @@ struct Vec3 {
     __host__ __device__ float dot(const Vec3& v) const { return x * v.x + y * v.y + z * v.z; }
     __host__ __device__ Vec3 cross(const Vec3& v) const { return Vec3(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x); }
     __host__ __device__ Vec3 normalize() const { float l = sqrt(x * x + y * y + z * z); return Vec3(x / l, y / l, z / l); }
+    __host__ __device__ Vec3 operator-() const { return Vec3(-x, -y, -z); }
+    __host__ __device__ Vec3& operator+=(const Vec3& v) { x += v.x; y += v.y; z += v.z; return *this; }
 };
 
 struct Vec2 {
@@ -38,6 +42,86 @@ struct Vec2 {
     __host__ __device__ Vec2(float u, float v) : u(u), v(v) {}
     __host__ __device__ Vec2 operator*(float f) const { return Vec2(u * f, v * f); }
     __host__ __device__ Vec2 operator+(const Vec2& other) const { return Vec2(u + other.u, v + other.v); }
+};
+
+struct Mat3 {
+    float m[9];
+
+    __host__ __device__ Mat3() {
+        for (int i = 0; i < 9; i++) m[i] = (i % 4 == 0) ? 1.0f : 0.0f;
+    }
+
+    __host__ __device__ static Mat3 identity() {
+        return Mat3();
+    }
+
+    __host__ __device__ Mat3(float m00, float m01, float m02,
+                         float m10, float m11, float m12,
+                         float m20, float m21, float m22) {
+        m[0] = m00; m[1] = m01; m[2] = m02;
+        m[3] = m10; m[4] = m11; m[5] = m12;
+        m[6] = m20; m[7] = m21; m[8] = m22;
+    }
+
+    __host__ __device__ static Mat3 diag(float a, float b, float c) {
+        Mat3 result;
+        result.m[0] = a; result.m[4] = b; result.m[8] = c;
+        return result;
+    }
+
+    __host__ __device__ Mat3 operator+(const Mat3& other) const {
+        Mat3 result;
+        for (int i = 0; i < 9; i++) {
+            result.m[i] = m[i] + other.m[i];
+        }
+        return result;
+    }
+
+    __host__ __device__ Mat3 operator*(const Mat3& other) const {
+        Mat3 result;
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                result.m[i*3 + j] = 0;
+                for (int k = 0; k < 3; k++) {
+                    result.m[i*3 + j] += m[i*3 + k] * other.m[k*3 + j];
+                }
+            }
+        }
+        return result;
+    }
+
+    __host__ __device__ Vec3 operator*(const Vec3& v) const {
+        return Vec3(
+            m[0]*v.x + m[1]*v.y + m[2]*v.z,
+            m[3]*v.x + m[4]*v.y + m[5]*v.z,
+            m[6]*v.x + m[7]*v.y + m[8]*v.z
+        );
+    }
+
+    __host__ __device__ Mat3 transpose() const {
+        Mat3 result;
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                result.m[i*3 + j] = m[j*3 + i];
+            }
+        }
+        return result;
+    }
+
+    __host__ __device__ Mat3 operator*(float scalar) const {
+        Mat3 result;
+        for (int i = 0; i < 9; i++) {
+            result.m[i] = m[i] * scalar;
+        }
+        return result;
+    }
+
+    __host__ __device__ Mat3& operator+=(const Mat3& other) {
+        for (int i = 0; i < 9; i++) {
+            m[i] += other.m[i];
+        }
+        return *this;
+    }
 };
 
 struct Mat4 {
@@ -85,8 +169,43 @@ struct Mat4 {
             m[8] * v.x + m[9] * v.y + m[10] * v.z
         );
     }
-};
 
+    __host__ __device__ static Mat4 identity() {
+        return Mat4();
+    }
+
+    __host__ __device__ static Mat4 rotationY(float angle) {
+        float c = cos(angle);
+        float s = sin(angle);
+        return Mat4(
+            c, 0, -s, 0,
+            0, 1, 0, 0,
+            s, 0, c, 0,
+            0, 0, 0, 1
+        );
+    }
+
+    __host__ __device__ void setTranslation(const Vec3& t) {
+        m[3] = t.x; m[7] = t.y; m[11] = t.z;
+    }
+
+    __host__ __device__ void setRotation(const Mat3& r) {
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                m[i*4 + j] = r.m[i*3 + j];
+            }
+        }
+    }
+
+    __host__ __device__ static Mat4 scale(float x, float y, float z) {
+        return Mat4(
+            x, 0, 0, 0,
+            0, y, 0, 0,
+            0, 0, z, 0,
+            0, 0, 0, 1
+        );
+    }
+};
 
 #define CHECK_CUDA(call) { \
     cudaError_t err = call; \
@@ -178,4 +297,12 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
             triangles.push_back(tri);
         }
     }
+}
+
+__host__ __device__ Mat3 skew(const Vec3& v) {
+    return Mat3(
+        0, -v.z, v.y,
+        v.z, 0, -v.x,
+        -v.y, v.x, 0
+    );
 }
