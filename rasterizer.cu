@@ -98,7 +98,7 @@ struct Mat4 {
     }
 };
 
-__global__ void render_kernel(Triangle* triangles, int* triangle_offsets, int* triangle_counts,
+__global__ void render_kernel(Triangle* transformed_triangles, int* triangle_offsets, int* triangle_counts,
                               unsigned char* textures, int* tex_widths, int* tex_heights,
                               unsigned char* output, float* zbuffer,
                               int width, int height, int num_objects, int num_scenes) {
@@ -116,7 +116,7 @@ __global__ void render_kernel(Triangle* triangles, int* triangle_offsets, int* t
     for (int obj = 0; obj < num_objects; obj++) {
         int triangle_offset = triangle_offsets[scene * num_objects + obj];
         for (int i = 0; i < triangle_counts[scene * num_objects + obj]; i++) {
-            Triangle& tri = triangles[triangle_offset + i];
+            Triangle& tri = transformed_triangles[triangle_offset + i];
             
             Vec3 screen_coords[3];
             for (int j = 0; j < 3; j++) {
@@ -240,7 +240,8 @@ Mat4 create_model_matrix_random() {
     );
 }
 
-__global__ void transform_vertices_kernel(Triangle* triangles, int* triangle_offsets, int* triangle_counts, 
+__global__ void transform_vertices_kernel(Triangle* input_triangles, Triangle* output_triangles, 
+                                          int* triangle_offsets, int* triangle_counts, 
                                           Mat4* model_matrices, Mat4 projection, int num_objects, int num_scenes) {
     int scene = blockIdx.y;
     int obj = blockIdx.z;
@@ -253,13 +254,15 @@ __global__ void transform_vertices_kernel(Triangle* triangles, int* triangle_off
     
     if (idx >= count) return;
 
-    Triangle& tri = triangles[offset + idx];
+    Triangle input_tri = input_triangles[offset + idx];
+    Triangle& output_tri = output_triangles[offset + idx];
     Mat4 model = model_matrices[scene * num_objects + obj];
     Mat4 mvp = projection * model;
 
     for (int j = 0; j < 3; j++) {
-        tri.v[j] = mvp.multiplyPoint(tri.v[j]);
-        tri.n[j] = model.multiplyVector(tri.n[j]).normalize();
+        output_tri.v[j] = mvp.multiplyPoint(input_tri.v[j]);
+        output_tri.n[j] = model.multiplyVector(input_tri.n[j]).normalize();
+        output_tri.uv[j] = input_tri.uv[j];  // Copy UV coordinates
     }
 }
 
@@ -309,13 +312,14 @@ int main() {
     }
 
     // Allocate GPU memory
-    Triangle* d_triangles;
+    Triangle *d_input_triangles, *d_transformed_triangles;
     int *d_triangle_offsets, *d_triangle_counts, *d_tex_widths, *d_tex_heights;
     unsigned char *d_textures, *d_output;
     float* d_zbuffer;
     Mat4* d_model_matrices;
 
-    CHECK_CUDA(cudaMalloc(&d_triangles, all_triangles.size() * sizeof(Triangle)));
+    CHECK_CUDA(cudaMalloc(&d_input_triangles, all_triangles.size() * sizeof(Triangle)));
+    CHECK_CUDA(cudaMalloc(&d_transformed_triangles, all_triangles.size() * sizeof(Triangle)));
     CHECK_CUDA(cudaMalloc(&d_triangle_offsets, num_scenes * num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_triangle_counts, num_scenes * num_objects * sizeof(int)));
     CHECK_CUDA(cudaMalloc(&d_textures, all_textures.size() * sizeof(unsigned char)));
@@ -326,7 +330,7 @@ int main() {
     CHECK_CUDA(cudaMalloc(&d_model_matrices, num_scenes * num_objects * sizeof(Mat4)));
 
     // Copy data to GPU
-    CHECK_CUDA(cudaMemcpy(d_triangles, all_triangles.data(), all_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_input_triangles, all_triangles.data(), all_triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_triangle_offsets, triangle_offsets.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_triangle_counts, triangle_counts.data(), num_scenes * num_objects * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_textures, all_textures.data(), all_textures.size() * sizeof(unsigned char), cudaMemcpyHostToDevice));
@@ -340,7 +344,7 @@ int main() {
     dim3 grid_size((max_triangles + block_size.x - 1) / block_size.x, num_scenes, num_objects);
     
     transform_vertices_kernel<<<grid_size, block_size>>>(
-        d_triangles, d_triangle_offsets, d_triangle_counts,
+        d_input_triangles, d_transformed_triangles, d_triangle_offsets, d_triangle_counts,
         d_model_matrices, projection, num_objects, num_scenes);
 
     // Render scenes
@@ -348,7 +352,7 @@ int main() {
     dim3 render_grid_size((width + render_block_size.x - 1) / render_block_size.x, 
                           (height + render_block_size.y - 1) / render_block_size.y, 
                           num_scenes);
-    render_kernel<<<render_grid_size, render_block_size>>>(d_triangles, d_triangle_offsets, d_triangle_counts,
+    render_kernel<<<render_grid_size, render_block_size>>>(d_transformed_triangles, d_triangle_offsets, d_triangle_counts,
                                                            d_textures, d_tex_widths, d_tex_heights,
                                                            d_output, d_zbuffer, width, height, num_objects, num_scenes);
 
@@ -362,7 +366,8 @@ int main() {
     }
 
     // Clean up GPU memory
-    cudaFree(d_triangles);
+    cudaFree(d_input_triangles);
+    cudaFree(d_transformed_triangles);
     cudaFree(d_triangle_offsets);
     cudaFree(d_triangle_counts);
     cudaFree(d_textures);
