@@ -206,14 +206,15 @@ void load_obj(const char* filename, std::vector<Triangle>& triangles) {
 
 Mat4 create_projection_matrix(float fov, float aspect, float near, float far) {
     float tanHalfFov = tan(fov / 2.0f);
-    Mat4 result;
-    result.m[0] = 1.0f / (aspect * tanHalfFov);
-    result.m[5] = 1.0f / tanHalfFov;
-    result.m[10] = -(far + near) / (far - near);
-    result.m[11] = -2.0f * far * near / (far - near);
-    result.m[14] = -1.0f;
-    result.m[15] = 0.0f;
-    return result;
+    float f = 1.0f / tanHalfFov;
+    float nf = 1.0f / (near - far);
+
+    return Mat4(
+        f / aspect,  0.0f,       0.0f,                   0.0f,
+        0.0f,        f,          0.0f,                   0.0f,
+        0.0f,        0.0f,       (far + near) * nf,      2.0f * far * near * nf,
+        0.0f,        0.0f,       -1.0f,                  0.0f
+    );
 }
 
 Mat4 create_model_matrix_random() {
