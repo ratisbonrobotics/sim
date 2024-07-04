@@ -257,10 +257,10 @@ __global__ void transform_vertices_kernel(Triangle* input_triangles, Triangle* o
     Triangle input_tri = input_triangles[offset + idx];
     Triangle& output_tri = output_triangles[offset + idx];
     Mat4 model = model_matrices[scene * num_objects + obj];
-    Mat4 mvp = projection * model;
+    Mat4 mp = projection * model;
 
     for (int j = 0; j < 3; j++) {
-        output_tri.v[j] = mvp.multiplyPoint(input_tri.v[j]);
+        output_tri.v[j] = mp.multiplyPoint(input_tri.v[j]);
         output_tri.n[j] = model.multiplyVector(input_tri.n[j]).normalize();
         output_tri.uv[j] = input_tri.uv[j];  // Copy UV coordinates
     }
