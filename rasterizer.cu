@@ -266,11 +266,21 @@ __global__ void transform_vertices_kernel(Triangle* input_triangles, Triangle* o
     }
 }
 
+#include <cstdio>
+#include <cstdlib>
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libswscale/swscale.h>
+#include <libavutil/imgutils.h>
+}
+
 int main() {
     const int width = 400, height = 300;
     const int num_objects = 2;
     const int num_scenes = 4;
-    const int num_frames = 4;  // Number of frames to render
+    const int num_frames = 1000;  // Increased number of frames for smoother video
+    const int fps = 60;  // Frames per second for the output video
     
     std::vector<std::vector<Triangle>> triangles(num_objects);
     std::vector<unsigned char*> textures(num_objects);
@@ -348,12 +358,116 @@ int main() {
                           (height + render_block_size.y - 1) / render_block_size.y, 
                           num_scenes);
 
+    // Prepare FFmpeg contexts for each scene
+    std::vector<AVFormatContext*> format_contexts(num_scenes, nullptr);
+    std::vector<AVCodecContext*> codec_contexts(num_scenes, nullptr);
+    std::vector<SwsContext*> sws_contexts(num_scenes, nullptr);
+    std::vector<AVFrame*> frames(num_scenes, nullptr);
+    std::vector<AVPacket*> packets(num_scenes, nullptr);
+
+    for (int scene = 0; scene < num_scenes; scene++) {
+        std::string filename = "output_scene" + std::to_string(scene) + ".mp4";
+
+        // Initialize format context
+        avformat_alloc_output_context2(&format_contexts[scene], nullptr, nullptr, filename.c_str());
+        if (!format_contexts[scene]) {
+            fprintf(stderr, "Could not create output context for scene %d\n", scene);
+            return 1;
+        }
+
+        // Find the encoder
+        const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+        if (!codec) {
+            fprintf(stderr, "Codec not found\n");
+            return 1;
+        }
+
+        // Create a new video stream
+        AVStream* stream = avformat_new_stream(format_contexts[scene], codec);
+        if (!stream) {
+            fprintf(stderr, "Could not allocate stream for scene %d\n", scene);
+            return 1;
+        }
+
+        // Allocate codec context
+        codec_contexts[scene] = avcodec_alloc_context3(codec);
+        if (!codec_contexts[scene]) {
+            fprintf(stderr, "Could not allocate video codec context for scene %d\n", scene);
+            return 1;
+        }
+
+        // Set codec parameters
+        codec_contexts[scene]->bit_rate = 400000;
+        codec_contexts[scene]->width = width;
+        codec_contexts[scene]->height = height;
+        codec_contexts[scene]->time_base = (AVRational){1, fps};
+        codec_contexts[scene]->framerate = (AVRational){fps, 1};
+        codec_contexts[scene]->gop_size = 10;
+        codec_contexts[scene]->max_b_frames = 1;
+        codec_contexts[scene]->pix_fmt = AV_PIX_FMT_YUV420P;
+
+        if (format_contexts[scene]->oformat->flags & AVFMT_GLOBALHEADER)
+            codec_contexts[scene]->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+        // Open the codec
+        if (avcodec_open2(codec_contexts[scene], codec, nullptr) < 0) {
+            fprintf(stderr, "Could not open codec for scene %d\n", scene);
+            return 1;
+        }
+
+        // Copy the stream parameters to the muxer
+        if (avcodec_parameters_from_context(stream->codecpar, codec_contexts[scene]) < 0) {
+            fprintf(stderr, "Could not copy the stream parameters for scene %d\n", scene);
+            return 1;
+        }
+
+        // Create sws context for color conversion
+        sws_contexts[scene] = sws_getContext(width, height, AV_PIX_FMT_RGB24,
+                                             width, height, AV_PIX_FMT_YUV420P,
+                                             SWS_BILINEAR, nullptr, nullptr, nullptr);
+
+        // Allocate frame and packet
+        frames[scene] = av_frame_alloc();
+        if (!frames[scene]) {
+            fprintf(stderr, "Could not allocate video frame for scene %d\n", scene);
+            return 1;
+        }
+        frames[scene]->format = codec_contexts[scene]->pix_fmt;
+        frames[scene]->width  = codec_contexts[scene]->width;
+        frames[scene]->height = codec_contexts[scene]->height;
+        if (av_frame_get_buffer(frames[scene], 0) < 0) {
+            fprintf(stderr, "Could not allocate the video frame data for scene %d\n", scene);
+            return 1;
+        }
+
+        packets[scene] = av_packet_alloc();
+        if (!packets[scene]) {
+            fprintf(stderr, "Could not allocate packet for scene %d\n", scene);
+            return 1;
+        }
+
+        // Open output file
+        if (!(format_contexts[scene]->oformat->flags & AVFMT_NOFILE)) {
+            if (avio_open(&format_contexts[scene]->pb, filename.c_str(), AVIO_FLAG_WRITE) < 0) {
+                fprintf(stderr, "Could not open output file '%s'\n", filename.c_str());
+                return 1;
+            }
+        }
+
+        // Write the stream header
+        if (avformat_write_header(format_contexts[scene], nullptr) < 0) {
+            fprintf(stderr, "Error occurred when opening output file for scene %d\n", scene);
+            return 1;
+        }
+    }
+
     // Main rendering loop
+    std::vector<unsigned char> output(num_scenes * width * height * 3);
     for (int frame = 0; frame < num_frames; frame++) {
         // Update model matrices (rotate objects)
         for (int scene = 0; scene < num_scenes; scene++) {
             for (int obj = 0; obj < num_objects; obj++) {
-                float rotation = 0.1f * frame;  // Adjust rotation speed as needed
+                float rotation = 0.1f;  // Adjust rotation speed as needed
                 
                 // Create rotation matrix
                 Mat4 rotation_matrix(
@@ -392,15 +506,82 @@ int main() {
             d_textures, d_tex_widths, d_tex_heights,
             d_output, d_zbuffer, width, height, num_objects, num_scenes);
 
-        // Copy result back to host and save
-        std::vector<unsigned char> output(num_scenes * width * height * 3);
+        // Copy result back to host
         CHECK_CUDA(cudaMemcpy(output.data(), d_output, num_scenes * width * height * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
         
+        // Encode frames for each scene
         for (int scene = 0; scene < num_scenes; scene++) {
-            std::string filename = "output_scene" + std::to_string(scene) + "_frame" + std::to_string(frame) + ".png";
-            stbi_write_png(filename.c_str(), width, height, 3, 
-                           output.data() + scene * width * height * 3, width * 3);
+            const uint8_t* rgb_data = output.data() + scene * width * height * 3;
+
+            // Convert RGB to YUV
+            const uint8_t* rgb_src[1] = { rgb_data };
+            int rgb_stride[1] = { 3 * width };
+            sws_scale(sws_contexts[scene], rgb_src, rgb_stride, 0, height,
+                      frames[scene]->data, frames[scene]->linesize);
+
+            frames[scene]->pts = frame;
+
+            // Encode the frame
+            int ret = avcodec_send_frame(codec_contexts[scene], frames[scene]);
+            if (ret < 0) {
+                fprintf(stderr, "Error sending a frame for encoding for scene %d\n", scene);
+                exit(1);
+            }
+
+            while (ret >= 0) {
+                ret = avcodec_receive_packet(codec_contexts[scene], packets[scene]);
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                    break;
+                else if (ret < 0) {
+                    fprintf(stderr, "Error during encoding for scene %d\n", scene);
+                    exit(1);
+                }
+
+                av_packet_rescale_ts(packets[scene], codec_contexts[scene]->time_base, format_contexts[scene]->streams[0]->time_base);
+                packets[scene]->stream_index = 0;
+                ret = av_interleaved_write_frame(format_contexts[scene], packets[scene]);
+                if (ret < 0) {
+                    fprintf(stderr, "Error writing packet for scene %d\n", scene);
+                    exit(1);
+                }
+            }
         }
+    }
+
+    // Finish encoding and close files
+    for (int scene = 0; scene < num_scenes; scene++) {
+        // Flush the encoder
+        avcodec_send_frame(codec_contexts[scene], nullptr);
+        while (true) {
+            int ret = avcodec_receive_packet(codec_contexts[scene], packets[scene]);
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                break;
+            else if (ret < 0) {
+                fprintf(stderr, "Error flushing codec for scene %d\n", scene);
+                exit(1);
+            }
+            av_packet_rescale_ts(packets[scene], codec_contexts[scene]->time_base, format_contexts[scene]->streams[0]->time_base);
+            packets[scene]->stream_index = 0;
+            ret = av_interleaved_write_frame(format_contexts[scene], packets[scene]);
+            if (ret < 0) {
+                fprintf(stderr, "Error writing packet during flushing for scene %d\n", scene);
+                exit(1);
+            }
+        }
+
+        // Write the trailer
+        av_write_trailer(format_contexts[scene]);
+
+        // Close the output file if it was opened
+        if (!(format_contexts[scene]->oformat->flags & AVFMT_NOFILE))
+            avio_closep(&format_contexts[scene]->pb);
+
+        // Free resources
+        avcodec_free_context(&codec_contexts[scene]);
+        av_frame_free(&frames[scene]);
+        av_packet_free(&packets[scene]);
+        sws_freeContext(sws_contexts[scene]);
+        avformat_free_context(format_contexts[scene]);
     }
 
     // Clean up GPU memory
@@ -415,10 +596,12 @@ int main() {
     cudaFree(d_zbuffer);
     cudaFree(d_model_matrices);
 
-    // Clean up
+    // Clean up textures
     for (auto texture : textures) {
         stbi_image_free(texture);
     }
+
+    printf("Video encoding complete. MP4 files have been created for each scene.\n");
 
     return 0;
 }
