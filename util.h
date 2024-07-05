@@ -22,6 +22,8 @@
 #include <cfloat>
 #include <cmath>
 
+// nvcc --std=c++17 -O3 rasterizer.cu `pkg-config --cflags --libs opencv4` && ./a.out
+
 struct Vec3 {
     float x, y, z;
     __host__ __device__ Vec3() : x(0), y(0), z(0) {}

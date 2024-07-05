@@ -95,7 +95,6 @@ int main() {
     const int num_objects = 2;
     const int num_scenes = 4;
     const int num_frames = 1000;
-    const int fps = 60;
     
     std::vector<std::vector<Triangle>> triangles(num_objects);
     std::vector<unsigned char*> textures(num_objects);
@@ -173,16 +172,6 @@ int main() {
                           (height + render_block_size.y - 1) / render_block_size.y, 
                           num_scenes);
 
-    // Prepare video writers for each scene
-    std::vector<cv::VideoWriter> video_writers(num_scenes);
-    for (int scene = 0; scene < num_scenes; scene++) {
-        std::string filename = "output_scene" + std::to_string(scene) + ".mp4";
-        video_writers[scene].open(filename, cv::VideoWriter::fourcc('a','v','c','1'), fps, cv::Size(width, height));
-        if (!video_writers[scene].isOpened()) {
-            std::cerr << "Could not open the output video file for writing: " << filename << std::endl;
-            return -1;
-        }
-    }
 
     // Drone dynamics constants
     const float k_f = 0.0004905f;
@@ -195,6 +184,17 @@ int main() {
     const float omega_min = 30.0f;
     const float omega_max = 70.0f;
     const float omega_stable = 50.0f;
+
+    // Prepare video writers for each scene
+    std::vector<cv::VideoWriter> video_writers(num_scenes);
+    for (int scene = 0; scene < num_scenes; scene++) {
+        std::string filename = "output_scene" + std::to_string(scene) + ".mp4";
+        video_writers[scene].open(filename, cv::VideoWriter::fourcc('a','v','c','1'), static_cast<int>(std::round(1.0f / dt)), cv::Size(width, height));
+        if (!video_writers[scene].isOpened()) {
+            std::cerr << "Could not open the output video file for writing: " << filename << std::endl;
+            return -1;
+        }
+    }
 
     // Drone state variables
     std::vector<float> omega(4, omega_stable);
