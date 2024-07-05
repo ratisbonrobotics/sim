@@ -248,8 +248,7 @@ int main() {
     }
 
     // Drone state variables
-    std::vector<float> omega(4, 50.0f);
-    omega[0] += 1.0f;
+    std::vector<float> omega(4, 50.01f);
     std::vector<Vec3> angular_velocity_B(num_scenes, Vec3(0, 0, 0));
     std::vector<Vec3> linear_velocity_W(num_scenes, Vec3(0, 0, 0));
     std::vector<Vec3> linear_position_W(num_scenes);
