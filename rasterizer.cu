@@ -288,18 +288,18 @@ void drone_controller(const Vec3& ang_vel_B, const Vec3& lin_vel_W, const Vec3& 
 
 void update_drone_dynamics(std::vector<Vec3>& ang_vel_B, std::vector<Vec3>& lin_vel_W,
                            std::vector<Vec3>& lin_pos_W, std::vector<Mat3>& R_W_B,
-                           std::vector<float>& omega, Mat4 model_matrices[][2], float dt) {
+                           std::vector<std::vector<float>>& omegas, Mat4 model_matrices[][2], float dt) {
     const float k_f = 0.0004905f, k_m = 0.00004905f, L = 0.25f;
     const float I[3] = {0.01f, 0.02f, 0.01f}, g = 9.81f, m = 0.5f;
     const float omega_min = 30.0f, omega_max = 70.0f;
 
     for (int scene = 0; scene < ang_vel_B.size(); scene++) {
-        for (int i = 0; i < 4; i++) omega[i] = std::max(std::min(omega[i], omega_max), omega_min);
+        for (int i = 0; i < 4; i++) omegas[scene][i] = std::max(std::min(omegas[scene][i], omega_max), omega_min);
 
         float F[4], M[4];
         for (int i = 0; i < 4; i++) {
-            F[i] = k_f * omega[i] * std::abs(omega[i]);
-            M[i] = k_m * omega[i] * std::abs(omega[i]);
+            F[i] = k_f * omegas[scene][i] * std::abs(omegas[scene][i]);
+            M[i] = k_m * omegas[scene][i] * std::abs(omegas[scene][i]);
         }
 
         Vec3 f_B_thrust(0, F[0] + F[1] + F[2] + F[3], 0);
@@ -407,7 +407,7 @@ int main() {
         video_writers[scene].open(filename, cv::VideoWriter::fourcc('a','v','c','1'), static_cast<int>(std::round(1.0f / dt)), cv::Size(width, height));
     }
 
-    std::vector<float> omega(4, 50.01f);
+    std::vector<std::vector<float>> omegas(num_scenes, std::vector<float>(4, 50.01f));
     std::vector<Vec3> ang_vel_B(num_scenes), lin_vel_W(num_scenes), lin_pos_W(num_scenes);
     std::vector<Mat3> R_W_B(num_scenes, Mat3::identity());
 
@@ -431,11 +431,11 @@ int main() {
             model_matrices[scene][0].setTranslation(translation);
         }
 
-        update_drone_dynamics(ang_vel_B, lin_vel_W, lin_pos_W, R_W_B, omega, model_matrices, dt);
+        update_drone_dynamics(ang_vel_B, lin_vel_W, lin_pos_W, R_W_B, omegas, model_matrices, dt);
 
         for (int scene = 0; scene < num_scenes; scene++) {
             Vec3 target_pos(1, 2, -5); // Set the target position for each scene
-            drone_controller(ang_vel_B[scene], lin_vel_W[scene], lin_pos_W[scene], R_W_B[scene], target_pos, omega);
+            drone_controller(ang_vel_B[scene], lin_vel_W[scene], lin_pos_W[scene], R_W_B[scene], target_pos, omegas[scene]);
         }
 
         CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_scenes * num_objects * sizeof(Mat4), cudaMemcpyHostToDevice));
