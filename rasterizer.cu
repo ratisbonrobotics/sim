@@ -20,6 +20,8 @@
 #include "stb_image_write.h"
 #pragma nv_diag_default 550
 
+// nvcc --std=c++17 -O3 rasterizer.cu `pkg-config --cflags --libs opencv4` && ./a.out
+
 #define CHECK_CUDA(call) { cudaError_t err = call; if (err != cudaSuccess) { printf("CUDA error: %s, line %d\n", cudaGetErrorString(err), __LINE__); exit(1); } }
 
 struct Vec3 {
