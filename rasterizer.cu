@@ -68,6 +68,13 @@ struct Mat3 {
         }
         return result;
     }
+    __host__ __device__ Vec3 multiplyVector(const Vec3& v) const {
+        return Vec3(
+            m[0] * v.x + m[1] * v.y + m[2] * v.z,
+            m[3] * v.x + m[4] * v.y + m[5] * v.z,
+            m[6] * v.x + m[7] * v.y + m[8] * v.z
+        );
+    }
 };
 
 struct Mat4 {
@@ -235,6 +242,50 @@ __global__ void transform_vertices_kernel(Triangle* in, Triangle* out,
     }
 }
 
+void drone_controller(const Vec3& ang_vel_B, const Vec3& lin_vel_W, const Vec3& lin_pos_W, const Mat3& R_W_B,
+                             const Vec3& target_pos, std::vector<float>& omega) {
+    const float k_p_xy = 0.5f, k_d_xy = 0.2f;
+    const float k_p_z = 2.0f, k_d_z = 0.5f;
+    const float k_p_ang_vel = 0.1f;
+    const float omega_min = 30.0f, omega_max = 70.0f;
+
+    Vec3 error_pos = target_pos - lin_pos_W;
+    Vec3 error_vel = -lin_vel_W;
+
+    Vec3 f_W_desired = Vec3(
+        k_p_xy * error_pos.x + k_d_xy * error_vel.x,
+        k_p_xy * error_pos.y + k_d_xy * error_vel.y,
+        k_p_z * error_pos.z + k_d_z * error_vel.z
+    );
+
+    Vec3 z_B = R_W_B.multiplyVector(Vec3(0, 0, 1));
+    float f_B_thrust_desired = f_W_desired.dot(z_B);
+
+    Vec3 x_C_desired = Vec3(f_W_desired.x, f_W_desired.y, 0).normalize();
+    Vec3 y_C_desired = z_B.cross(x_C_desired).normalize();
+    Vec3 x_B = R_W_B.multiplyVector(Vec3(1, 0, 0));
+    Vec3 y_B = R_W_B.multiplyVector(Vec3(0, 1, 0));
+
+    Vec3 error_ang_vel(
+        k_p_ang_vel * y_B.dot(x_C_desired),
+        k_p_ang_vel * x_B.dot(y_C_desired),
+        0
+    );
+
+    Vec3 tau_B_desired = -error_ang_vel;
+
+    float omega_sq[4];
+    omega_sq[0] = (f_B_thrust_desired + tau_B_desired.y) / 4.0f;
+    omega_sq[1] = (f_B_thrust_desired - tau_B_desired.x) / 4.0f;
+    omega_sq[2] = (f_B_thrust_desired - tau_B_desired.y) / 4.0f;
+    omega_sq[3] = (f_B_thrust_desired + tau_B_desired.x) / 4.0f;
+
+    for (int i = 0; i < 4; i++) {
+        omega[i] = std::sqrt(std::max(omega_sq[i], 0.0f));
+        omega[i] = std::max(std::min(omega[i], omega_max), omega_min);
+    }
+}
+
 void update_drone_dynamics(std::vector<Vec3>& ang_vel_B, std::vector<Vec3>& lin_vel_W,
                            std::vector<Vec3>& lin_pos_W, std::vector<Mat3>& R_W_B,
                            std::vector<float>& omega, Mat4 model_matrices[][2], float dt) {
@@ -381,6 +432,11 @@ int main() {
         }
 
         update_drone_dynamics(ang_vel_B, lin_vel_W, lin_pos_W, R_W_B, omega, model_matrices, dt);
+
+        for (int scene = 0; scene < num_scenes; scene++) {
+            Vec3 target_pos(1, 2, -5); // Set the target position for each scene
+            drone_controller(ang_vel_B[scene], lin_vel_W[scene], lin_pos_W[scene], R_W_B[scene], target_pos, omega);
+        }
 
         CHECK_CUDA(cudaMemcpy(d_model_matrices, model_matrices, num_scenes * num_objects * sizeof(Mat4), cudaMemcpyHostToDevice));
 
